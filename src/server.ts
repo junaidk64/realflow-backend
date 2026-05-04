@@ -20,7 +20,11 @@ import uploadRoutes from './routes/upload'
 const app = express()
 
 app.use(helmet())
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }))
+app.use(
+	cors({
+		origin: '*',
+	}),
+) //allow all origins for now, can be restricted in production
 
 // Raw body needed for Paddle webhook signature verification
 app.use('/api/billing/webhook', express.raw({ type: 'application/json' }))
