@@ -1,20 +1,55 @@
 export const PADDLE_PLANS = {
-	starter: {
-		priceId: process.env.PADDLE_STARTER_PRICE_ID!,
-		name: 'Starter',
+	essentials: {
+		monthlyPriceId: process.env.PADDLE_ESSENTIALS_MONTHLY_PRICE_ID!,
+		yearlyPriceId: process.env.PADDLE_ESSENTIALS_YEARLY_PRICE_ID!,
+		name: 'Essentials',
+		internalPlan: 'starter' as const,
+		price: { monthly: 9, yearly: 99 },
 		limits: { leads: 100, agents: 1 },
+		features: [
+			'Up to 100 leads',
+			'1 agent seat',
+			'New Lead Follow-Up automation',
+			'Lead & listing management',
+			'Basic analytics',
+		],
 	},
-	pro: {
-		priceId: process.env.PADDLE_PRO_PRICE_ID!,
-		name: 'Pro',
+	professional: {
+		monthlyPriceId: process.env.PADDLE_PRO_MONTHLY_PRICE_ID!,
+		yearlyPriceId: process.env.PADDLE_PRO_YEARLY_PRICE_ID!,
+		name: 'Professional',
+		internalPlan: 'pro' as const,
+		price: { monthly: 19, yearly: 190 },
 		limits: { leads: Infinity, agents: 1 },
+		features: [
+			'Unlimited leads',
+			'1 agent seat',
+			'All Essentials features',
+			'Appointment Reminder automation',
+			'Listing Published Alert automation',
+			'Advanced analytics',
+		],
 	},
-	brokerage: {
-		priceId: process.env.PADDLE_BROKERAGE_PRICE_ID!,
-		name: 'Brokerage',
+	elite: {
+		monthlyPriceId: process.env.PADDLE_ELITE_MONTHLY_PRICE_ID!,
+		yearlyPriceId: process.env.PADDLE_ELITE_YEARLY_PRICE_ID!,
+		name: 'Elite',
+		internalPlan: 'brokerage' as const,
+		price: { monthly: 29, yearly: 290 },
 		limits: { leads: Infinity, agents: 10 },
+		features: [
+			'Unlimited leads',
+			'Up to 10 agent seats',
+			'All Professional features',
+			'Monthly Performance Report automation',
+			'Agent performance analytics',
+			'Priority support',
+		],
 	},
 }
+
+export type PaddlePlanKey = keyof typeof PADDLE_PLANS
+export type InternalPlan = 'trial' | 'starter' | 'pro' | 'brokerage'
 
 // Plan hierarchy — higher rank = more access
 export const PLAN_RANK: Record<string, number> = {
@@ -22,6 +57,18 @@ export const PLAN_RANK: Record<string, number> = {
 	starter: 1,
 	pro: 2,
 	brokerage: 3,
+}
+
+// Resolve a Paddle price ID to the internal plan name (starter/pro/brokerage)
+export function getPlanFromPriceId(priceId: string): InternalPlan {
+	const { PADDLE_ESSENTIALS_MONTHLY_PRICE_ID, PADDLE_ESSENTIALS_YEARLY_PRICE_ID,
+		PADDLE_PRO_MONTHLY_PRICE_ID, PADDLE_PRO_YEARLY_PRICE_ID,
+		PADDLE_ELITE_MONTHLY_PRICE_ID, PADDLE_ELITE_YEARLY_PRICE_ID } = process.env
+
+	if (priceId === PADDLE_ESSENTIALS_MONTHLY_PRICE_ID || priceId === PADDLE_ESSENTIALS_YEARLY_PRICE_ID) return 'starter'
+	if (priceId === PADDLE_PRO_MONTHLY_PRICE_ID || priceId === PADDLE_PRO_YEARLY_PRICE_ID) return 'pro'
+	if (priceId === PADDLE_ELITE_MONTHLY_PRICE_ID || priceId === PADDLE_ELITE_YEARLY_PRICE_ID) return 'brokerage'
+	return 'trial'
 }
 
 // The 4 platform-seeded workflows. Users can only enable/disable these;

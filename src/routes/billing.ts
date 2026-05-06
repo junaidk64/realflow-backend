@@ -5,17 +5,26 @@ import { rateLimiter } from "../middleware/rateLimit";
 import User from "../models/User";
 import Subscription from "../models/Subscription";
 import { paddle } from "../lib/paddle";
-import { PADDLE_PLANS } from "../lib/paddle-plans";
+import { PADDLE_PLANS, getPlanFromPriceId } from "../lib/paddle-plans";
 import { sendPaymentFailedEmail } from "../lib/resend";
 
 const router = Router();
 
-function getPlanFromPriceId(priceId: string): string {
-  if (priceId === process.env.PADDLE_STARTER_PRICE_ID) return "starter";
-  if (priceId === process.env.PADDLE_PRO_PRICE_ID) return "pro";
-  if (priceId === process.env.PADDLE_BROKERAGE_PRICE_ID) return "brokerage";
-  return "trial";
-}
+// GET /api/billing/plans — public, returns plan config for frontend
+router.get("/plans", (_req, res) => {
+  const plans = Object.entries(PADDLE_PLANS).map(([key, plan]) => ({
+    key,
+    name: plan.name,
+    internalPlan: plan.internalPlan,
+    price: plan.price,
+    limits: {
+      leads: plan.limits.leads === Infinity ? null : plan.limits.leads,
+      agents: plan.limits.agents,
+    },
+    features: plan.features,
+  }));
+  return res.json({ plans });
+});
 
 // POST /api/billing/webhook — raw body, no Firebase auth
 router.post("/webhook", async (req, res) => {
@@ -35,7 +44,7 @@ router.post("/webhook", async (req, res) => {
       case EventName.SubscriptionUpdated: {
         const sub = event.data;
         const userId = sub.customData?.userId;
-        const planName = getPlanFromPriceId(sub.items[0].price.id);
+        const planName = getPlanFromPriceId(sub.items[0]?.price?.id ?? "");
         const periodEnd = new Date(sub.currentBillingPeriod.endsAt);
 
         await User.findByIdAndUpdate(userId, {
@@ -103,11 +112,17 @@ router.use(verifyFirebaseToken);
 router.use(rateLimiter);
 
 // POST /api/billing/checkout
+// Body: { plan: "essentials" | "professional" | "elite", interval: "monthly" | "yearly" }
 router.post("/checkout", async (req, res) => {
   try {
-    const { plan } = req.body;
+    const { plan, interval = "monthly" } = req.body;
     const planConfig = PADDLE_PLANS[plan as keyof typeof PADDLE_PLANS];
     if (!planConfig) return res.status(400).json({ error: "Invalid plan" });
+    if (!["monthly", "yearly"].includes(interval)) {
+      return res.status(400).json({ error: "interval must be 'monthly' or 'yearly'" });
+    }
+
+    const priceId = interval === "yearly" ? planConfig.yearlyPriceId : planConfig.monthlyPriceId;
 
     const dbUser = await User.findOne({ firebaseUid: req.user!.uid });
     if (!dbUser) return res.status(404).json({ error: "User not found" });
@@ -123,7 +138,7 @@ router.post("/checkout", async (req, res) => {
     }
 
     const transaction = await paddle.transactions.create({
-      items: [{ priceId: planConfig.priceId, quantity: 1 }],
+      items: [{ priceId, quantity: 1 }],
       customerId,
       customData: { userId: dbUser._id.toString() },
     });
