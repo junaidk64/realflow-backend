@@ -31,10 +31,6 @@ app.use(
 app.options('*', cors())
 app.use(express.urlencoded({ extended: true })) // For parsing application/x-www-form-urlencoded
 app.use(express.json()) // For parsing application/json
-app.use((req, res, next) => {
-	console.log('Request received')
-	next()
-}) // Simple request logging, replace with a proper logger in production
 
 // Raw body needed for Paddle webhook signature verification
 app.use('/api/billing/webhook', express.raw({ type: 'application/json' }))
