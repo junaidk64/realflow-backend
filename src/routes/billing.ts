@@ -30,29 +30,66 @@ router.get('/plans', (_req, res) => {
 
 // POST /api/billing/webhook — raw body, no Firebase auth
 router.post('/webhook', async (req, res) => {
-	const rawBody = req.body.toString()
 	const signature = (req.headers['paddle-signature'] as string) ?? ''
-	console.log(JSON.stringify({ rawBody, signature }))
+	const webhookSecret = process.env.PADDLE_WEBHOOK_SECRET
+
+	// console.log('[Webhook] Received Paddle webhook')
+	// console.log('[Webhook] Signature:', signature)
+	// console.log('[Webhook] Secret exists:', !!webhookSecret)
+
+	if (!webhookSecret) {
+		// console.error('[Webhook] PADDLE_WEBHOOK_SECRET not set in .env')
+		return res.status(400).json({ error: 'Webhook secret not configured' })
+	}
+
+	if (Buffer.isBuffer(req.body)) {
+		// console.log('[Webhook] Body is Buffer, converting to string')
+	} else if (typeof req.body === 'string') {
+		// console.log('[Webhook] Body is already string')
+	} else {
+		// console.error('[Webhook] Body type unexpected:', typeof req.body)
+	}
+
+	const rawBody = Buffer.isBuffer(req.body)
+		? req.body
+		: Buffer.from(req.body ?? '')
 
 	let event: any
 	try {
-		event = paddle.webhooks.unmarshal(
-			rawBody,
-			process.env.PADDLE_WEBHOOK_SECRET!,
-			signature,
-		)
-	} catch {
+		event = paddle.webhooks.unmarshal(rawBody as any, webhookSecret, signature)
+		// console.log('[Webhook] ✅ Signature verified, event type:', event.eventType)
+	} catch (error: any) {
+		console.error('[Webhook] ❌ Signature verification failed')
+		console.error('[Webhook] Error:', error.message)
+		console.log('[Webhook] Debug info:', {
+			signatureProvided: !!signature,
+			secretConfigured: !!webhookSecret,
+			bodyLength: rawBody.length,
+		})
+
 		return res.status(400).json({ error: 'Invalid signature' })
 	}
 
 	try {
+		// console.log('[Webhook] Processing event:', event.eventType)
+
 		switch (event.eventType) {
 			case EventName.SubscriptionActivated:
 			case EventName.SubscriptionUpdated: {
+				console.log('[Webhook] Subscription activated/updated')
 				const sub = event.data
 				const userId = sub.customData?.userId
-				const planName = getPlanFromPriceId(sub.items[0]?.price?.id ?? '')
+				const priceId = sub.items[0]?.price?.id ?? ''
+				const planName = getPlanFromPriceId(priceId)
 				const periodEnd = new Date(sub.currentBillingPeriod.endsAt)
+
+				console.log('[Webhook] Details:', {
+					subscriptionId: sub.id,
+					userId,
+					priceId,
+					planName,
+					periodEnd: periodEnd.toISOString(),
+				})
 
 				await User.findByIdAndUpdate(userId, {
 					plan: planName,
@@ -72,10 +109,13 @@ router.post('/webhook', async (req, res) => {
 					},
 					{ upsert: true },
 				)
+
+				console.log('[Webhook] \u2705 User and subscription updated')
 				break
 			}
 
 			case EventName.SubscriptionPastDue: {
+				console.log('[Webhook] Subscription past due')
 				const sub = event.data
 				await User.findOneAndUpdate(
 					{ paddleSubscriptionId: sub.id },
@@ -85,10 +125,12 @@ router.post('/webhook', async (req, res) => {
 					{ paddleSubscriptionId: sub.id },
 					{ status: 'past_due' },
 				)
+				console.log('[Webhook] \u2705 Past due status updated')
 				break
 			}
 
 			case EventName.SubscriptionCanceled: {
+				console.log('[Webhook] Subscription canceled')
 				const sub = event.data
 				await Subscription.findOneAndUpdate(
 					{ paddleSubscriptionId: sub.id },
@@ -102,17 +144,26 @@ router.post('/webhook', async (req, res) => {
 						currentPeriodEnd: undefined,
 					},
 				)
+				console.log('[Webhook] \u2705 Subscription canceled in database')
 				break
 			}
 
 			case EventName.TransactionPaymentFailed: {
+				console.log('[Webhook] Payment failed')
 				const txn = event.data
 				await sendPaymentFailedEmail(txn.customer?.email ?? '')
+				console.log('[Webhook] \u2705 Payment failure email sent')
 				break
 			}
+
+			default:
+				console.log(
+					'[Webhook] \u26a0\ufe0f Unknown event type:',
+					event.eventType,
+				)
 		}
 	} catch (err) {
-		console.error('[Paddle webhook] processing error:', err)
+		console.error('[Webhook] \u274c Processing error:', err)
 	}
 
 	return res.json({ received: true })

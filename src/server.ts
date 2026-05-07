@@ -32,14 +32,13 @@ app.use(
 	}),
 )
 app.options('*', cors())
-app.use(express.urlencoded({ extended: true })) // For parsing application/x-www-form-urlencoded
-app.use(express.json()) // For parsing application/json
 
-// Raw body needed for Paddle webhook signature verification
+// Raw body needed for Paddle webhook signature verification (MUST be before express.json())
 app.use('/api/billing/webhook', express.raw({ type: 'application/json' }))
 
-// JSON body parser for all other routes
-app.use(express.json())
+// JSON body parsers for other routes
+app.use(express.urlencoded({ extended: true })) // For parsing application/x-www-form-urlencoded
+app.use(express.json()) // For parsing application/json
 
 // Routes
 app.use('/api/auth', authRoutes)
