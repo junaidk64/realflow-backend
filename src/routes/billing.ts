@@ -127,7 +127,7 @@ router.use(rateLimiter)
 router.post('/checkout', async (req, res) => {
 	try {
 		const { plan, interval = 'monthly' } = req.body
-		console.log(req.body)
+		// console.log(req.body)
 
 		const planConfig = PADDLE_PLANS[plan as keyof typeof PADDLE_PLANS]
 		if (!planConfig) return res.status(400).json({ error: 'Invalid plan' })
