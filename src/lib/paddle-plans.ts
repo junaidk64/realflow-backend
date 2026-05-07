@@ -1,3 +1,5 @@
+import dotenv from 'dotenv'
+dotenv.config()
 export const PADDLE_PLANS = {
 	essentials: {
 		monthlyPriceId: process.env.PADDLE_ESSENTIALS_MONTHLY_PRICE_ID!,
@@ -61,13 +63,30 @@ export const PLAN_RANK: Record<string, number> = {
 
 // Resolve a Paddle price ID to the internal plan name (starter/pro/brokerage)
 export function getPlanFromPriceId(priceId: string): InternalPlan {
-	const { PADDLE_ESSENTIALS_MONTHLY_PRICE_ID, PADDLE_ESSENTIALS_YEARLY_PRICE_ID,
-		PADDLE_PRO_MONTHLY_PRICE_ID, PADDLE_PRO_YEARLY_PRICE_ID,
-		PADDLE_ELITE_MONTHLY_PRICE_ID, PADDLE_ELITE_YEARLY_PRICE_ID } = process.env
+	const {
+		PADDLE_ESSENTIALS_MONTHLY_PRICE_ID,
+		PADDLE_ESSENTIALS_YEARLY_PRICE_ID,
+		PADDLE_PRO_MONTHLY_PRICE_ID,
+		PADDLE_PRO_YEARLY_PRICE_ID,
+		PADDLE_ELITE_MONTHLY_PRICE_ID,
+		PADDLE_ELITE_YEARLY_PRICE_ID,
+	} = process.env
 
-	if (priceId === PADDLE_ESSENTIALS_MONTHLY_PRICE_ID || priceId === PADDLE_ESSENTIALS_YEARLY_PRICE_ID) return 'starter'
-	if (priceId === PADDLE_PRO_MONTHLY_PRICE_ID || priceId === PADDLE_PRO_YEARLY_PRICE_ID) return 'pro'
-	if (priceId === PADDLE_ELITE_MONTHLY_PRICE_ID || priceId === PADDLE_ELITE_YEARLY_PRICE_ID) return 'brokerage'
+	if (
+		priceId === PADDLE_ESSENTIALS_MONTHLY_PRICE_ID ||
+		priceId === PADDLE_ESSENTIALS_YEARLY_PRICE_ID
+	)
+		return 'starter'
+	if (
+		priceId === PADDLE_PRO_MONTHLY_PRICE_ID ||
+		priceId === PADDLE_PRO_YEARLY_PRICE_ID
+	)
+		return 'pro'
+	if (
+		priceId === PADDLE_ELITE_MONTHLY_PRICE_ID ||
+		priceId === PADDLE_ELITE_YEARLY_PRICE_ID
+	)
+		return 'brokerage'
 	return 'trial'
 }
 

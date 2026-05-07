@@ -1,8 +1,11 @@
 import cors from 'cors'
+import dotenv from 'dotenv'
 import 'dotenv/config'
 import express from 'express'
 import helmet from 'helmet'
 import { connectDB } from './lib/db'
+
+dotenv.config()
 
 import analyticsRoutes from './routes/analytics'
 import appointmentsRoutes from './routes/appointments'
