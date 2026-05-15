@@ -1,6 +1,11 @@
 node_modules/
 dist/
 .env
-*.js.map
-n8n-workflows/
-
+logs/
+*.log
+coverage/
+.DS_Store
+.idea/
+.vscode/
+*.pem
+*.key

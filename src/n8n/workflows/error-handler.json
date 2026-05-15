@@ -1,0 +1,76 @@
+{
+  "name": "Error Handler Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "error-handler",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "d4e5f6g7-0004-0004-0004-000000000001",
+      "name": "Webhook - Error Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $input.all()[0].json;\nconst now = new Date().toISOString();\nconst severity = error.statusCode >= 500 ? 'CRITICAL' : 'WARNING';\n\nreturn [{\n  json: {\n    ...error,\n    severity,\n    loggedAt: now,\n    message: `[${severity}] Error in ${error.service || 'unknown'}: ${error.message || 'Unknown error'}`,\n    shouldAlert: severity === 'CRITICAL'\n  }\n}];"
+      },
+      "id": "d4e5f6g7-0004-0004-0004-000000000002",
+      "name": "Classify Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"shouldAlert\"]}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "d4e5f6g7-0004-0004-0004-000000000003",
+      "name": "Should Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, logged: true, severity: $json.severity }) }}"
+      },
+      "id": "d4e5f6g7-0004-0004-0004-000000000004",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Webhook - Error Input": {
+      "main": [
+        [{ "node": "Classify Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Classify Error": {
+      "main": [
+        [{ "node": "Should Alert?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Should Alert?": {
+      "main": [
+        [{ "node": "Respond", "type": "main", "index": 0 }],
+        [{ "node": "Respond", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,47 +1,68 @@
-import { Schema, model, Document } from "mongoose";
+import mongoose, { Document, Schema } from 'mongoose'
 
 export interface IUser extends Document {
-  firebaseUid: string;
-  name?: string;
-  email?: string;
-  image?: string;
-  plan: "trial" | "starter" | "pro" | "brokerage";
-  paddleCustomerId?: string;
-  paddleSubscriptionId?: string;
-  subscriptionStatus: "trialing" | "active" | "past_due" | "cancelled" | "paused";
-  currentPeriodEnd?: Date;
-  trialEndsAt?: Date;
-  agencyName?: string;
-  phone?: string;
-  timezone: string;
-  n8nWorkflowsEnabled: string[];
-  createdAt: Date;
+	name: string
+	email: string
+	googleId: string
+	avatar?: string
+	role: 'admin' | 'user'
+	isActive: boolean
+	lastLogin?: Date
+	createdAt: Date
+	updatedAt: Date
 }
 
-const UserSchema = new Schema<IUser>({
-  firebaseUid: { type: String, unique: true, required: true },
-  name: String,
-  email: { type: String, unique: true, sparse: true },
-  image: String,
-  plan: {
-    type: String,
-    enum: ["trial", "starter", "pro", "brokerage"],
-    default: "trial",
-  },
-  paddleCustomerId: String,
-  paddleSubscriptionId: String,
-  subscriptionStatus: {
-    type: String,
-    enum: ["trialing", "active", "past_due", "cancelled", "paused"],
-    default: "trialing",
-  },
-  currentPeriodEnd: Date,
-  trialEndsAt: Date,
-  agencyName: String,
-  phone: String,
-  timezone: { type: String, default: "America/New_York" },
-  n8nWorkflowsEnabled: [String],
-  createdAt: { type: Date, default: Date.now },
-});
+const UserSchema = new Schema<IUser>(
+	{
+		name: {
+			type: String,
+			required: true,
+			trim: true,
+			maxlength: 100,
+		},
+		email: {
+			type: String,
+			required: true,
+			unique: true,
+			lowercase: true,
+			trim: true,
+		},
+		googleId: {
+			type: String,
+			required: true,
+			unique: true,
+		},
+		avatar: {
+			type: String,
+			default: null,
+		},
+		role: {
+			type: String,
+			enum: ['admin', 'user'],
+			default: 'user',
+		},
+		isActive: {
+			type: Boolean,
+			default: true,
+		},
+		lastLogin: {
+			type: Date,
+			default: null,
+		},
+	},
+	{
+		timestamps: true,
+		toJSON: {
+			transform: (_doc, ret) => {
+				// delete ret.__v;
+				return ret
+			},
+		},
+	},
+)
 
-export default model<IUser>("User", UserSchema);
+UserSchema.index({ email: 1 })
+UserSchema.index({ googleId: 1 })
+
+export const User = mongoose.model<IUser>('User', UserSchema)
+export default User

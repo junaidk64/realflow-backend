@@ -1,126 +1,141 @@
-import { Document, Schema, Types, model } from 'mongoose'
+import mongoose, { Document, Schema } from 'mongoose'
 
-export interface IActivity {
-	type:
-		| 'email'
-		| 'sms'
-		| 'whatsapp'
-		| 'call'
-		| 'note'
-		| 'status-change'
-		| 'viewing'
-	content?: string
-	createdAt: Date
-}
+export type LeadStatus = 'new' | 'contacted' | 'quoted' | 'won' | 'lost'
+export type LeadSource = 'email' | 'manual' | 'webhook'
 
 export interface ILead extends Document {
-	agentId: Types.ObjectId
-	name: string
-	email?: string
-	phone?: string
-	source?: 'website' | 'referral' | 'zillow' | 'cold-call' | 'social' | 'other'
-	status:
-		| 'new'
-		| 'contacted'
-		| 'viewing-scheduled'
-		| 'offer-made'
-		| 'closed-won'
-		| 'closed-lost'
-		| 'nurture'
-	propertyType?:
-		| 'buy'
-		| 'sell'
-		| 'rent'
-		| 'house'
-		| 'condo'
-		| 'apartment'
-		| 'townhouse'
-		| 'land'
-		| 'commercial'
-		| 'other'
-	budget?: number
-	preferredAreas: string[]
-	bedrooms?: number
-	notes?: string
-	tags: string[]
-	assignedListingId?: Types.ObjectId
-	lastContactedAt?: Date
-	nextFollowUpAt?: Date
-	portalToken?: string
-	activities: IActivity[]
+	userId: mongoose.Types.ObjectId
+	source: LeadSource
+	rawEmailId: string
+	customerName: string
+	customerEmail: string
+	customerPhone: string
+	movingDate: string
+	fromAddress: string
+	toAddress: string
+	services: string[]
+	notes: string
+	status: LeadStatus
+	autoReplySent: boolean
+	autoReplySentAt: Date | null
+	n8nTriggered: boolean
+	n8nTriggeredAt: Date | null
+	emailLogId: mongoose.Types.ObjectId | null
+	confidence: number
+	rawEmailSubject: string
+	rawEmailFrom: string
 	createdAt: Date
 	updatedAt: Date
 }
 
-const LeadSchema = new Schema<ILead>({
-	agentId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-	name: { type: String, required: true },
-	email: String,
-	phone: String,
-	source: {
-		type: String,
-		enum: ['website', 'referral', 'zillow', 'cold-call', 'social', 'other'],
-	},
-	status: {
-		type: String,
-		enum: [
-			'new',
-			'contacted',
-			'viewing-scheduled',
-			'offer-made',
-			'closed-won',
-			'closed-lost',
-			'nurture',
-		],
-		default: 'new',
-	},
-	propertyType: {
-		type: String,
-		enum: [
-			'buy',
-			'sell',
-			'rent',
-			'house',
-			'condo',
-			'townhouse',
-			'land',
-			'apartment',
-			'commercial',
-			'other',
-		],
-	},
-	budget: Number,
-	preferredAreas: [String],
-	bedrooms: Number,
-	notes: String,
-	tags: [String],
-	assignedListingId: { type: Schema.Types.ObjectId, ref: 'Listing' },
-	lastContactedAt: Date,
-	nextFollowUpAt: Date,
-	portalToken: { type: String, unique: true, sparse: true },
-	activities: [
-		{
-			type: {
-				type: String,
-				enum: [
-					'email',
-					'sms',
-					'whatsapp',
-					'call',
-					'note',
-					'status-change',
-					'viewing',
-				],
-			},
-			content: String,
-			createdAt: { type: Date, default: Date.now },
+const LeadSchema = new Schema<ILead>(
+	{
+		userId: {
+			type: Schema.Types.ObjectId,
+			ref: 'User',
+			required: true,
 		},
-	],
-	createdAt: { type: Date, default: Date.now },
-	updatedAt: { type: Date, default: Date.now },
-})
+		source: {
+			type: String,
+			enum: ['email', 'manual', 'webhook'],
+			default: 'email',
+		},
+		rawEmailId: {
+			type: String,
+			default: '',
+		},
+		customerName: {
+			type: String,
+			trim: true,
+			default: '',
+		},
+		customerEmail: {
+			type: String,
+			lowercase: true,
+			trim: true,
+			default: '',
+		},
+		customerPhone: {
+			type: String,
+			trim: true,
+			default: '',
+		},
+		movingDate: {
+			type: String,
+			default: '',
+		},
+		fromAddress: {
+			type: String,
+			default: '',
+		},
+		toAddress: {
+			type: String,
+			default: '',
+		},
+		services: {
+			type: [String],
+			default: [],
+		},
+		notes: {
+			type: String,
+			default: '',
+		},
+		status: {
+			type: String,
+			enum: ['new', 'contacted', 'quoted', 'won', 'lost'],
+			default: 'new',
+		},
+		autoReplySent: {
+			type: Boolean,
+			default: false,
+		},
+		autoReplySentAt: {
+			type: Date,
+			default: null,
+		},
+		n8nTriggered: {
+			type: Boolean,
+			default: false,
+		},
+		n8nTriggeredAt: {
+			type: Date,
+			default: null,
+		},
+		emailLogId: {
+			type: Schema.Types.ObjectId,
+			ref: 'EmailLog',
+			default: null,
+		},
+		confidence: {
+			type: Number,
+			min: 0,
+			max: 100,
+			default: 0,
+		},
+		rawEmailSubject: {
+			type: String,
+			default: '',
+		},
+		rawEmailFrom: {
+			type: String,
+			default: '',
+		},
+	},
+	{
+		timestamps: true,
+		toJSON: {
+			transform: (_doc, ret) => {
+				// delete ret.__v;
+				return ret
+			},
+		},
+	},
+)
 
-LeadSchema.index({ agentId: 1, createdAt: -1 })
-LeadSchema.index({ agentId: 1, status: 1 })
+LeadSchema.index({ userId: 1, createdAt: -1 })
+LeadSchema.index({ userId: 1, status: 1 })
+LeadSchema.index({ userId: 1, customerEmail: 1 })
+LeadSchema.index({ rawEmailId: 1 })
 
-export default model<ILead>('Lead', LeadSchema)
+export const Lead = mongoose.model<ILead>('Lead', LeadSchema)
+export default Lead

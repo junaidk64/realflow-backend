@@ -1,0 +1,76 @@
+{
+  "name": "Auto Reply Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "auto-reply-trigger",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "c3d4e5f6-0003-0003-0003-000000000001",
+      "name": "Webhook - Trigger Auto Reply",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"customerEmail\"]}}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "c3d4e5f6-0003-0003-0003-000000000002",
+      "name": "Has Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.all()[0].json;\nconst customerName = lead.customerName || 'there';\nconst fromAddr = lead.fromAddress || 'your current address';\nconst toAddr = lead.toAddress || 'your new home';\nconst movingDate = lead.movingDate || 'your chosen date';\n\nconst html = `\n<!DOCTYPE html>\n<html>\n<body style=\"background: linear-gradient(135deg, #0f0c29, #302b63, #24243e); min-height: 100vh; padding: 40px 20px; font-family: -apple-system, sans-serif;\">\n  <div style=\"max-width: 600px; margin: 0 auto; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); border-radius: 24px; padding: 48px;\">\n    <h1 style=\"color: white; font-size: 28px; text-align: center;\">We've Received Your Enquiry!</h1>\n    <p style=\"color: rgba(255,255,255,0.7); font-size: 16px; text-align: center;\">Hi ${customerName}, thank you for reaching out. We'll get back to you within 2 hours.</p>\n    <div style=\"background: rgba(255,255,255,0.06); border-radius: 12px; padding: 20px; margin: 24px 0;\">\n      <p style=\"color: rgba(255,255,255,0.5); font-size: 12px; text-transform: uppercase; letter-spacing: 1px;\">Moving Details</p>\n      <p style=\"color: white;\">📍 From: ${fromAddr}</p>\n      <p style=\"color: white;\">🏠 To: ${toAddr}</p>\n      <p style=\"color: white;\">📅 Date: ${movingDate}</p>\n    </div>\n  </div>\n</body>\n</html>`;\n\nreturn [{ json: { ...lead, emailHtml: html } }];"
+      },
+      "id": "c3d4e5f6-0003-0003-0003-000000000003",
+      "name": "Generate Email HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Auto reply queued' }) }}"
+      },
+      "id": "c3d4e5f6-0003-0003-0003-000000000004",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 200]
+    }
+  ],
+  "connections": {
+    "Webhook - Trigger Auto Reply": {
+      "main": [
+        [{ "node": "Has Email?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Email?": {
+      "main": [
+        [{ "node": "Generate Email HTML", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Generate Email HTML": {
+      "main": [
+        [{ "node": "Respond Success", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

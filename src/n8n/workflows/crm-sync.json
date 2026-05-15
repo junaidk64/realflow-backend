@@ -1,0 +1,125 @@
+{
+  "name": "CRM Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crm-sync",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "id": "e5f6g7h8-0005-0005-0005-000000000001",
+      "name": "Webhook - Receive Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "crm-sync"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"isLead\"]}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "e5f6g7h8-0005-0005-0005-000000000002",
+      "name": "Is Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.all()[0].json;\n\n// Map LeadFlow Pro fields to generic CRM format\n// Adjust field names to match YOUR CRM's API schema\nconst crmPayload = {\n  firstName: (lead.customerName || '').split(' ')[0] || '',\n  lastName: (lead.customerName || '').split(' ').slice(1).join(' ') || '',\n  email: lead.customerEmail || '',\n  phone: lead.customerPhone || '',\n  address: lead.fromAddress || '',\n  notes: [\n    lead.toAddress ? `Destination: ${lead.toAddress}` : '',\n    lead.movingDate ? `Date: ${lead.movingDate}` : '',\n    (lead.services || []).length ? `Services: ${lead.services.join(', ')}` : '',\n    lead.notes || ''\n  ].filter(Boolean).join('\\n'),\n  source: 'LeadFlow Pro - Gmail',\n  confidence: lead.confidence || 0,\n  leadStatus: 'New',\n  emailSubject: lead.rawEmailSubject || '',\n  createdAt: lead.createdAt || new Date().toISOString()\n};\n\nreturn [{ json: crmPayload }];"
+      },
+      "id": "e5f6g7h8-0005-0005-0005-000000000003",
+      "name": "Map to CRM Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-crm.com/api/leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_CRM_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "e5f6g7h8-0005-0005-0005-000000000004",
+      "name": "Push to CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Lead synced to CRM', leadId: $json.leadId }) }}"
+      },
+      "id": "e5f6g7h8-0005-0005-0005-000000000005",
+      "name": "Respond - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: 'Not a lead, skipped' }) }}"
+      },
+      "id": "e5f6g7h8-0005-0005-0005-000000000006",
+      "name": "Respond - Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [650, 400]
+    }
+  ],
+  "connections": {
+    "Webhook - Receive Lead": {
+      "main": [
+        [{ "node": "Is Lead?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Lead?": {
+      "main": [
+        [{ "node": "Map to CRM Format", "type": "main", "index": 0 }],
+        [{ "node": "Respond - Skip", "type": "main", "index": 0 }]
+      ]
+    },
+    "Map to CRM Format": {
+      "main": [
+        [{ "node": "Push to CRM", "type": "main", "index": 0 }]
+      ]
+    },
+    "Push to CRM": {
+      "main": [
+        [{ "node": "Respond - Success", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" },
+  "notes": "Replace 'https://your-crm.com/api/leads' and 'YOUR_CRM_API_KEY' in the 'Push to CRM' node with your actual CRM endpoint and API key. Supported: HubSpot, Salesforce, Zoho, Pipedrive, or any REST API."
+}

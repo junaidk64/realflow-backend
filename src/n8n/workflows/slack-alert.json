@@ -1,0 +1,111 @@
+{
+  "name": "Slack Lead Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-lead",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "f6g7h8i9-0006-0006-0006-000000000001",
+      "name": "Webhook - Receive Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "slack-lead"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"isLead\"]}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "f6g7h8i9-0006-0006-0006-000000000002",
+      "name": "Is Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $input.all()[0].json;\n\nconst confidence = lead.confidence || 0;\nconst emoji = confidence >= 80 ? '🔥' : confidence >= 60 ? '✅' : '📩';\nconst urgency = confidence >= 80 ? '*HIGH PRIORITY*' : confidence >= 60 ? 'Good lead' : 'New lead';\n\nconst lines = [\n  `${emoji} ${urgency}: *${lead.customerName || 'Unknown'}*`,\n  `📧 ${lead.customerEmail || 'No email'}`,\n  lead.customerPhone ? `📞 ${lead.customerPhone}` : '',\n  lead.fromAddress ? `📍 From: ${lead.fromAddress}` : '',\n  lead.toAddress ? `🏠 To: ${lead.toAddress}` : '',\n  lead.movingDate ? `📅 Date: ${lead.movingDate}` : '',\n  (lead.services || []).length ? `🔧 Services: ${lead.services.join(', ')}` : '',\n  `🎯 Confidence: ${confidence}%`,\n  lead.rawEmailSubject ? `📨 Subject: _${lead.rawEmailSubject}_` : ''\n].filter(Boolean);\n\nconst slackPayload = {\n  text: lines.join('\\n'),\n  blocks: [\n    {\n      type: 'section',\n      text: {\n        type: 'mrkdwn',\n        text: lines.join('\\n')\n      }\n    },\n    {\n      type: 'divider'\n    }\n  ]\n};\n\nreturn [{ json: slackPayload }];"
+      },
+      "id": "f6g7h8i9-0006-0006-0006-000000000003",
+      "name": "Build Slack Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "f6g7h8i9-0006-0006-0006-000000000004",
+      "name": "Send to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Slack notified' }) }}"
+      },
+      "id": "f6g7h8i9-0006-0006-0006-000000000005",
+      "name": "Respond - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, message: 'Not a lead, skipped' }) }}"
+      },
+      "id": "f6g7h8i9-0006-0006-0006-000000000006",
+      "name": "Respond - Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [650, 400]
+    }
+  ],
+  "connections": {
+    "Webhook - Receive Lead": {
+      "main": [
+        [{ "node": "Is Lead?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Lead?": {
+      "main": [
+        [{ "node": "Build Slack Message", "type": "main", "index": 0 }],
+        [{ "node": "Respond - Skip", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Slack Message": {
+      "main": [
+        [{ "node": "Send to Slack", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send to Slack": {
+      "main": [
+        [{ "node": "Respond - Success", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" },
+  "notes": "Replace 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK' in the 'Send to Slack' node with your actual Slack Incoming Webhook URL. Get one at: api.slack.com/apps → Your App → Incoming Webhooks."
+}

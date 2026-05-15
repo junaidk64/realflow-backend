@@ -1,0 +1,79 @@
+{
+  "name": "Lead Extraction Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-extraction",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "b2c3d4e5-0002-0002-0002-000000000001",
+      "name": "Webhook - Raw Email",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.all()[0].json;\nconst text = data.textBody || '';\nconst subject = data.subject || '';\nconst fullText = subject + '\\n' + text;\n\nconst leadKeywords = ['moving', 'removal', 'relocat', 'house move', 'quote', 'enquiry', 'inquiry', 'compare my move', 'from address', 'to address', 'moving date'];\nconst matchCount = leadKeywords.filter(kw => fullText.toLowerCase().includes(kw)).length;\nconst isLead = matchCount >= 2;\n\nconst emailRegex = /\\b([a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,})\\b/g;\nconst emails = fullText.match(emailRegex) || [];\n\nconst phoneRegex = /(?:phone|tel|mobile|contact)?\\s*[:\\-]?\\s*([\\+\\d][\\d\\s\\-\\(\\)]{7,20})/i;\nconst phoneMatch = fullText.match(phoneRegex);\n\nconst nameRegex = /(?:customer name|name|full name)\\s*[:\\-]\\s*([^\\n\\r]+)/i;\nconst nameMatch = fullText.match(nameRegex);\n\nreturn [{\n  json: {\n    ...data,\n    extracted: {\n      isLead,\n      confidence: Math.min(matchCount * 15, 100),\n      customerEmail: emails.find(e => !e.includes('noreply')) || data.fromEmail || '',\n      customerName: nameMatch ? nameMatch[1].trim() : '',\n      customerPhone: phoneMatch ? phoneMatch[1].trim() : '',\n      keywords: leadKeywords.filter(kw => fullText.toLowerCase().includes(kw))\n    }\n  }\n}];"
+      },
+      "id": "b2c3d4e5-0002-0002-0002-000000000002",
+      "name": "Extract Lead Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"extracted\"][\"isLead\"]}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "b2c3d4e5-0002-0002-0002-000000000003",
+      "name": "Is Lead Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://n8n.boldme.site/webhook/gmail-lead-trigger",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ isLead: true, confidence: $json.extracted.confidence, customerEmail: $json.extracted.customerEmail, customerName: $json.extracted.customerName, customerPhone: $json.extracted.customerPhone, subject: $json.subject, fromEmail: $json.fromEmail, extractedAt: new Date().toISOString() }) }}"
+      },
+      "id": "b2c3d4e5-0002-0002-0002-000000000004",
+      "name": "Forward to Lead Trigger",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [850, 200]
+    }
+  ],
+  "connections": {
+    "Webhook - Raw Email": {
+      "main": [
+        [{ "node": "Extract Lead Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Lead Data": {
+      "main": [
+        [{ "node": "Is Lead Email?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Lead Email?": {
+      "main": [
+        [{ "node": "Forward to Lead Trigger", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}
