@@ -136,4 +136,37 @@ export const getWebhookLogs = async (
 	}
 }
 
-export default { handleGmailWebhook, handleN8nWebhook, getWebhookLogs }
+export const handleN8nCallback = async (
+	req: Request,
+	res: Response,
+	next: NextFunction,
+): Promise<void> => {
+	try {
+		const { leadId, status, error } = req.body
+
+		await WebhookLog.create({
+			type: 'n8n_callback',
+			payload: req.body,
+			status: 'processed',
+			processedAt: new Date(),
+		})
+
+		if (leadId && status === 'sent') {
+			await Lead.findByIdAndUpdate(leadId, {
+				autoReplySent: true,
+				autoReplySentAt: new Date(),
+			})
+			logger.info(`n8n callback: auto-reply marked sent for lead ${leadId}`)
+		}
+
+		if (error) {
+			logger.warn(`n8n callback error for lead ${leadId}: ${error}`)
+		}
+
+		res.json({ success: true })
+	} catch (err) {
+		next(err)
+	}
+}
+
+export default { handleGmailWebhook, handleN8nWebhook, handleN8nCallback, getWebhookLogs }

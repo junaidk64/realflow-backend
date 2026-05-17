@@ -205,4 +205,30 @@ export const getPublicTemplates = async (req: Request, res: Response, next: Next
   }
 }
 
-export default { getTemplates, getTemplate, createTemplate, updateTemplate, deleteTemplate, publishTemplate, getPublicTemplates }
+export const renderTemplate = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params
+    if (!mongoose.isValidObjectId(id)) {
+      res.status(400).json({ success: false, message: 'Invalid template ID' })
+      return
+    }
+
+    const template = await Template.findOne({ _id: id, status: 'approved' })
+    if (!template) {
+      res.status(404).json({ success: false, message: 'Template not found or not approved' })
+      return
+    }
+
+    const variables: Record<string, string> = req.body.variables ?? {}
+    const html = template.htmlContent.replace(
+      /\{\{(\w+)\}\}/g,
+      (_, key) => String(variables[key] ?? ''),
+    )
+
+    res.json({ success: true, data: { html } })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export default { getTemplates, getTemplate, createTemplate, updateTemplate, deleteTemplate, publishTemplate, getPublicTemplates, renderTemplate }

@@ -3,6 +3,8 @@ import { google } from 'googleapis';
 import { ILead } from '../models/Lead';
 import { IGmailConnection } from '../models/GmailConnection';
 import { ISettings } from '../models/Settings';
+import { Template } from '../models/Template';
+import { IWorkflowConfig } from '../models/Workflow';
 import { getAuthenticatedClient } from './gmailService';
 import { config } from '../config';
 import logger from '../utils/logger';
@@ -331,4 +333,67 @@ const sendAutoReplyViaSMTP = async (
   }
 };
 
-export default { generateAutoReplyHTML, sendAutoReply };
+export const buildAutoReplyPayload = async (
+  lead: Partial<ILead>,
+  workflowConfig: Partial<IWorkflowConfig> & { workflowId: string },
+  settings: Partial<ISettings> | null,
+  from: string,
+): Promise<{
+  html: string
+  subject: string
+  to: string
+  from: string
+  leadId: string
+  workflowId: string
+}> => {
+  const subject =
+    workflowConfig.subject ||
+    settings?.autoReplySubject ||
+    'Thank you for your enquiry'
+  let html = ''
+
+  if (workflowConfig.templateId) {
+    const template = await Template.findOne({
+      _id: workflowConfig.templateId,
+      status: 'approved',
+    })
+    if (template) {
+      const vars: Record<string, string> = {
+        customerName: lead.customerName || '',
+        customerEmail: lead.customerEmail || '',
+        fromAddress: lead.fromAddress || '',
+        toAddress: lead.toAddress || '',
+        movingDate: lead.movingDate || '',
+        services: (lead.services || []).join(', '),
+        businessName: settings?.businessName || '',
+        emailSignature: settings?.emailSignature || '',
+        timestamp: new Date().toISOString(),
+      }
+      html = template.htmlContent.replace(
+        /\{\{(\w+)\}\}/g,
+        (_, key) => String(vars[key] ?? ''),
+      )
+    }
+  }
+
+  if (!html && settings?.autoReplyTemplate) {
+    html = settings.autoReplyTemplate
+      .replace(/\{\{customerName\}\}/g, lead.customerName || '')
+      .replace(/\{\{fromAddress\}\}/g, lead.fromAddress || '')
+      .replace(/\{\{toAddress\}\}/g, lead.toAddress || '')
+      .replace(/\{\{movingDate\}\}/g, lead.movingDate || '')
+      .replace(/\{\{businessName\}\}/g, settings.businessName || '')
+      .replace(/\{\{emailSignature\}\}/g, settings.emailSignature || '')
+  }
+
+  return {
+    html,
+    subject,
+    to: lead.customerEmail || '',
+    from,
+    leadId: lead._id?.toString() ?? '',
+    workflowId: workflowConfig.workflowId,
+  }
+}
+
+export default { generateAutoReplyHTML, sendAutoReply, buildAutoReplyPayload };

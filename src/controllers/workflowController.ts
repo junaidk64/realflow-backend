@@ -75,23 +75,23 @@ export const updateWorkflow = async (
 		const { id } = req.params
 		const { name, description, webhookUrl, config: wfConfig } = req.body
 
-		const updateData: Record<string, unknown> = {}
-		if (name !== undefined) updateData.name = name
-		if (description !== undefined) updateData.description = description
-		if (webhookUrl !== undefined) updateData.webhookUrl = webhookUrl
-		if (wfConfig !== undefined) updateData.config = wfConfig
-
-		const workflow = await Workflow.findOneAndUpdate(
-			{ _id: id, userId: req.user!.userId },
-			updateData,
-			{ new: true },
-		)
+		const workflow = await Workflow.findOne({ _id: id, userId: req.user!.userId })
 
 		if (!workflow) {
 			res.status(404).json({ success: false, message: 'Workflow not found' })
 			return
 		}
 
+		if (name !== undefined) workflow.name = name
+		if (description !== undefined) workflow.description = description
+		if (webhookUrl !== undefined) workflow.webhookUrl = webhookUrl
+		if (wfConfig !== undefined) {
+			// Deep-merge so partial updates don't wipe other config keys
+			const current = workflow.toObject().config ?? {}
+			workflow.set('config', { ...current, ...wfConfig })
+		}
+
+		await workflow.save()
 		res.json({ success: true, data: { workflow } })
 	} catch (error) {
 		next(error)

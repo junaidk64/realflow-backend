@@ -1,5 +1,13 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
+export interface IWorkflowConfig {
+	templateId: mongoose.Types.ObjectId | null
+	templateName: string | null
+	subject: string | null
+	fallbackToGlobal: boolean
+	[key: string]: unknown
+}
+
 export interface IWorkflow extends Document {
 	userId: mongoose.Types.ObjectId
 	name: string
@@ -9,11 +17,21 @@ export interface IWorkflow extends Document {
 	isActive: boolean
 	triggerCount: number
 	lastTriggered: Date | null
-	config: Record<string, unknown>
+	config: IWorkflowConfig
 	webhookUrl: string
 	createdAt: Date
 	updatedAt: Date
 }
+
+const WorkflowConfigSchema = new Schema<IWorkflowConfig>(
+	{
+		templateId: { type: Schema.Types.ObjectId, ref: 'Template', default: null },
+		templateName: { type: String, default: null },
+		subject: { type: String, default: null },
+		fallbackToGlobal: { type: Boolean, default: true },
+	},
+	{ _id: false, strict: false },
+)
 
 const WorkflowSchema = new Schema<IWorkflow>(
 	{
@@ -53,8 +71,8 @@ const WorkflowSchema = new Schema<IWorkflow>(
 			default: null,
 		},
 		config: {
-			type: Schema.Types.Mixed,
-			default: {},
+			type: WorkflowConfigSchema,
+			default: () => ({}),
 		},
 		webhookUrl: {
 			type: String,
@@ -65,7 +83,6 @@ const WorkflowSchema = new Schema<IWorkflow>(
 		timestamps: true,
 		toJSON: {
 			transform: (_doc, ret) => {
-				// delete ret.__v;
 				return ret
 			},
 		},

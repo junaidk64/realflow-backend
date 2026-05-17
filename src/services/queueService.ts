@@ -6,7 +6,7 @@ import { Lead } from '../models/Lead'
 import { Settings } from '../models/Settings'
 import { Workflow } from '../models/Workflow'
 import logger from '../utils/logger'
-import { sendAutoReply } from './emailService'
+import { buildAutoReplyPayload, sendAutoReply } from './emailService'
 import { processNewEmails } from './gmailService'
 import { extractLeadFromEmail } from './leadExtractionService'
 import { triggerWebhook } from './n8nService'
@@ -238,25 +238,47 @@ const autoReplyWorker = new Worker(
 const n8nTriggerWorker = new Worker(
 	'n8n-trigger',
 	async (job: Job) => {
-		const { leadId, workflowId, webhookUrl } = job.data
+		const { leadId, userId, workflowId, webhookUrl } = job.data
 
-		const lead = await Lead.findById(leadId).lean()
-		if (!lead) throw new Error('Lead not found')
+		const [lead, workflow, settings] = await Promise.all([
+			Lead.findById(leadId).lean(),
+			Workflow.findById(workflowId),
+			Settings.findOne({ userId }).lean(),
+		])
 
-		const result = await triggerWebhook(webhookUrl, {
-			leadId,
-			customerName: lead.customerName,
-			customerEmail: lead.customerEmail,
-			customerPhone: lead.customerPhone,
-			movingDate: lead.movingDate,
-			fromAddress: lead.fromAddress,
-			toAddress: lead.toAddress,
-			services: lead.services,
-			notes: lead.notes,
-			status: lead.status,
-			confidence: lead.confidence,
-			createdAt: lead.createdAt,
-		})
+		if (!lead || !workflow) throw new Error('Lead or workflow not found')
+
+		let payload: Record<string, unknown>
+
+		if (workflow.type === 'auto_reply') {
+			const gmailConnection = await GmailConnection.findOne({
+				userId,
+				isActive: true,
+			})
+			payload = await buildAutoReplyPayload(
+				lead as never,
+				{ ...workflow.config, workflowId: workflow._id.toString() },
+				settings as never,
+				gmailConnection?.email ?? '',
+			)
+		} else {
+			payload = {
+				leadId,
+				customerName: lead.customerName,
+				customerEmail: lead.customerEmail,
+				customerPhone: lead.customerPhone,
+				movingDate: lead.movingDate,
+				fromAddress: lead.fromAddress,
+				toAddress: lead.toAddress,
+				services: lead.services,
+				notes: lead.notes,
+				status: lead.status,
+				confidence: lead.confidence,
+				createdAt: lead.createdAt,
+			}
+		}
+
+		const result = await triggerWebhook(webhookUrl, payload)
 
 		if (result.success) {
 			await Lead.findByIdAndUpdate(leadId, {
