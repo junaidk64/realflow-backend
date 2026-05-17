@@ -15,6 +15,8 @@ import authRoutes from './routes/auth'
 import gmailRoutes from './routes/gmail'
 import leadRoutes from './routes/leads'
 import settingsRoutes from './routes/settings'
+import templateRoutes from './routes/templates'
+import adminTemplateRoutes from './routes/adminTemplates'
 import webhookRoutes from './routes/webhooks'
 import workflowRoutes from './routes/workflows'
 
@@ -74,6 +76,8 @@ app.get('/health', (_req, res) => {
 app.use('/api/auth', authRoutes)
 app.use('/api/gmail', gmailRoutes)
 app.use('/api/leads', leadRoutes)
+app.use('/api/templates', templateRoutes)
+app.use('/api/admin/templates', adminTemplateRoutes)
 app.use('/api/workflows', workflowRoutes)
 app.use('/api/settings', settingsRoutes)
 app.use('/api/webhooks', webhookRoutes)
