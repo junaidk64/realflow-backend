@@ -1,0 +1,253 @@
+{
+  "name": "RealFlow — Notification (new_lead | workflow_triggered | daily_summary)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "realflow/notification",
+        "responseMode": "onReceived",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "id": "33333333-0003-0003-0003-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.html }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "33333333-0003-0003-0003-000000000002",
+      "name": "Has Pre-rendered HTML?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/email/send",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "userId",
+              "value": "={{ $json.userId }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $json.to }}"
+            },
+            {
+              "name": "subject",
+              "value": "={{ $json.subject }}"
+            },
+            {
+              "name": "html",
+              "value": "={{ $json.html }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "33333333-0003-0003-0003-000000000003",
+      "name": "Send Notification Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build notification HTML inline when backend didn't pre-render\nconst d = $input.item.json;\nconst eventType = d.eventType || 'event';\nconst ts = d.timestamp ? new Date(d.timestamp).toLocaleString('en-GB') : new Date().toLocaleString('en-GB');\nconst biz = d.businessName || 'RealFlow';\n\nlet body = '';\nif (eventType === 'new_lead') {\n  body = `\n    <h2 style=\"color:#6366f1\">New Lead Received</h2>\n    <p><strong>Customer:</strong> ${d.customerName || 'Unknown'}</p>\n    <p><strong>Email:</strong> ${d.customerEmail || '—'}</p>\n    <p><strong>Phone:</strong> ${d.customerPhone || '—'}</p>\n    <p><strong>From:</strong> ${d.fromAddress || '—'}</p>\n    <p><strong>To:</strong> ${d.toAddress || '—'}</p>\n    <p><strong>Moving Date:</strong> ${d.movingDate || '—'}</p>\n    <p><strong>Services:</strong> ${Array.isArray(d.services) ? d.services.join(', ') : d.services || '—'}</p>\n    <p><strong>Confidence:</strong> ${d.confidence || '—'}%</p>\n    <p><small>Received: ${ts}</small></p>\n  `;\n} else if (eventType === 'workflow_triggered') {\n  body = `\n    <h2 style=\"color:#8b5cf6\">Workflow Triggered</h2>\n    <p>A workflow was triggered for lead <strong>${d.customerName || d.leadId || 'Unknown'}</strong>.</p>\n    <p><small>At: ${ts}</small></p>\n  `;\n} else if (eventType === 'daily_summary') {\n  const rows = Object.entries(d.statusBreakdown || {}).map(([s, c]) =>\n    `<tr><td style=\"padding:4px 8px;border:1px solid #ddd;\">${s}</td><td style=\"padding:4px 8px;border:1px solid #ddd;\">${c}</td></tr>`\n  ).join('');\n  body = `\n    <h2 style=\"color:#06b6d4\">Daily Lead Summary</h2>\n    <p><strong>Leads Today:</strong> ${d.todayCount ?? 0}</p>\n    <p><strong>This Week:</strong> ${d.weekCount ?? 0}</p>\n    <p><strong>Auto Replies Sent:</strong> ${d.autoReplySent ?? 0}</p>\n    <p><strong>Workflows Triggered:</strong> ${d.n8nTriggered ?? 0}</p>\n    ${rows ? `<table style=\"border-collapse:collapse;margin-top:8px;\"><tr><th style=\"padding:4px 8px;border:1px solid #ddd;\">Status</th><th style=\"padding:4px 8px;border:1px solid #ddd;\">Count</th></tr>${rows}</table>` : ''}\n    <p><small>${ts}</small></p>\n  `;\n} else {\n  body = `<h2>Notification: ${eventType}</h2><pre>${JSON.stringify(d, null, 2)}</pre>`;\n}\n\nconst html = `<!DOCTYPE html><html><body style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\">${body}<hr style=\"margin-top:24px;\"/><p style=\"color:#aaa;font-size:12px;\">Sent by ${biz} via RealFlow</p></body></html>`;\n\nreturn [{\n  json: {\n    userId: d.userId || '',\n    html,\n    subject: d.subject || (eventType === 'new_lead' ? `New Lead: ${d.customerName || 'Unknown'}` : eventType === 'daily_summary' ? `Daily Summary — ${d.todayCount ?? 0} leads today` : `RealFlow Alert: ${eventType}`),\n    to: d.to || d.notifyEmail || '',\n    eventType,\n    leadId: d.leadId || ''\n  }\n}];"
+      },
+      "id": "33333333-0003-0003-0003-000000000004",
+      "name": "Build Notification HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/email/send",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "userId",
+              "value": "={{ $json.userId }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $json.to }}"
+            },
+            {
+              "name": "subject",
+              "value": "={{ $json.subject }}"
+            },
+            {
+              "name": "html",
+              "value": "={{ $json.html }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "33333333-0003-0003-0003-000000000005",
+      "name": "Send Built Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [920, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/webhooks/n8n-callback",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "leadId",
+              "value": "={{ $('Webhook').first().json.leadId || '' }}"
+            },
+            {
+              "name": "workflowId",
+              "value": "={{ $('Webhook').first().json.workflowId || '' }}"
+            },
+            {
+              "name": "eventType",
+              "value": "={{ $('Webhook').first().json.eventType }}"
+            },
+            {
+              "name": "status",
+              "value": "sent"
+            },
+            {
+              "name": "error",
+              "value": ""
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "33333333-0003-0003-0003-000000000006",
+      "name": "Callback — Notification Sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1140, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Has Pre-rendered HTML?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Pre-rendered HTML?": {
+      "main": [
+        [
+          {
+            "node": "Send Notification Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Notification HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification Email": {
+      "main": [
+        [
+          {
+            "node": "Callback — Notification Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification HTML": {
+      "main": [
+        [
+          {
+            "node": "Send Built Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Built Notification": {
+      "main": [
+        [
+          {
+            "node": "Callback — Notification Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "realflow-notification-v2",
+  "tags": [
+    { "id": "1", "name": "realflow" },
+    { "id": "4", "name": "notification" }
+  ]
+}

@@ -31,6 +31,7 @@ export const config = {
   n8n: {
     baseUrl: process.env.N8N_BASE_URL || 'https://n8n.boldme.site',
     apiKey: process.env.N8N_API_KEY || '',
+    callbackSecret: process.env.N8N_CALLBACK_SECRET || '',
   },
   encryption: {
     key: process.env.ENCRYPTION_KEY || 'dev-encryption-key-32-chars-xxxx',

@@ -1,19 +1,19 @@
-import { Router } from 'express';
+import { Router } from 'express'
 import {
-  getSettings,
-  updateSettings,
-  testEmailTemplate,
-  updateEmailSignature,
-} from '../controllers/settingsController';
-import { verifyToken } from '../middlewares/auth';
+	getSettings,
+	testEmailTemplate,
+	updateEmailSignature,
+	updateSettings,
+} from '../controllers/settingsController'
+import { verifyToken } from '../middlewares/auth'
 
-const router = Router();
+const router: Router = Router()
 
-router.use(verifyToken);
+router.use(verifyToken)
 
-router.get('/', getSettings);
-router.patch('/', updateSettings);
-router.post('/test-template', testEmailTemplate);
-router.patch('/signature', updateEmailSignature);
+router.get('/', getSettings)
+router.patch('/', updateSettings)
+router.post('/test-template', testEmailTemplate)
+router.patch('/signature', updateEmailSignature)
 
-export default router;
+export default router

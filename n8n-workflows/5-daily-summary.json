@@ -1,0 +1,218 @@
+{
+  "name": "RealFlow — Daily Summary (Cron 8 AM UTC)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "55555555-0005-0005-0005-000000000001",
+      "name": "Every Day at 8 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BACKEND_URL }}/api/leads/stats",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.BACKEND_SERVICE_TOKEN }}"
+            },
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "55555555-0005-0005-0005-000000000002",
+      "name": "Get Lead Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BACKEND_URL }}/api/settings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.BACKEND_SERVICE_TOKEN }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "55555555-0005-0005-0005-000000000003",
+      "name": "Get Settings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const statsResp    = $('Get Lead Stats').first().json;\nconst settingsResp = $('Get Settings').first().json;\n\nconst stats    = statsResp.data    || {};\nconst settings = settingsResp.data?.settings || {};\n\n// userId is in settings — used to send via the user's own email provider\nconst userId = settings.userId || settings._id || '';\n\nconst notifyEmail = settings.notifications?.emailAddress || $env.FALLBACK_NOTIFY_EMAIL || '';\nif (!notifyEmail) {\n  throw new Error('No notification email configured. Set notifications.emailAddress in Settings or FALLBACK_NOTIFY_EMAIL env var.');\n}\n\nconst bizName = settings.businessName || 'RealFlow';\nconst today   = new Date().toLocaleDateString('en-GB', {\n  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'\n});\n\nconst statusRows = Object.entries(stats.statusBreakdown || {}).map(([s, c]) =>\n  `<tr>\n    <td style=\"padding:8px 12px;border:1px solid #e2e8f0;text-transform:capitalize;\">${s}</td>\n    <td style=\"padding:8px 12px;border:1px solid #e2e8f0;text-align:center;font-weight:600;\">${c}</td>\n  </tr>`\n).join('');\n\nconst dailyRows = (stats.dailyLeads || []).slice(-7).map(d =>\n  `<tr>\n    <td style=\"padding:8px 12px;border:1px solid #e2e8f0;\">${d._id}</td>\n    <td style=\"padding:8px 12px;border:1px solid #e2e8f0;text-align:center;\">${d.count}</td>\n  </tr>`\n).join('');\n\nconst html = `<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"></head>\n<body style=\"font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:24px;background:#f8fafc;\">\n  <div style=\"background:#fff;border-radius:12px;padding:32px;border:1px solid #e2e8f0;\">\n    <div style=\"border-left:4px solid #6366f1;padding-left:16px;margin-bottom:24px;\">\n      <h1 style=\"margin:0;font-size:22px;color:#1e293b;\">Daily Lead Summary</h1>\n      <p style=\"margin:4px 0 0;color:#64748b;\">${today}</p>\n    </div>\n\n    <div style=\"display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px;\">\n      <div style=\"background:#f1f5f9;border-radius:8px;padding:16px;\">\n        <div style=\"font-size:28px;font-weight:700;color:#6366f1;\">${stats.todayCount ?? 0}</div>\n        <div style=\"color:#64748b;font-size:13px;margin-top:4px;\">Leads Today</div>\n      </div>\n      <div style=\"background:#f1f5f9;border-radius:8px;padding:16px;\">\n        <div style=\"font-size:28px;font-weight:700;color:#8b5cf6;\">${stats.weekCount ?? 0}</div>\n        <div style=\"color:#64748b;font-size:13px;margin-top:4px;\">This Week</div>\n      </div>\n      <div style=\"background:#f1f5f9;border-radius:8px;padding:16px;\">\n        <div style=\"font-size:28px;font-weight:700;color:#06b6d4;\">${stats.autoReplySent ?? 0}</div>\n        <div style=\"color:#64748b;font-size:13px;margin-top:4px;\">Auto Replies Sent</div>\n      </div>\n      <div style=\"background:#f1f5f9;border-radius:8px;padding:16px;\">\n        <div style=\"font-size:28px;font-weight:700;color:#10b981;\">${Math.round(stats.conversionRate ?? 0)}%</div>\n        <div style=\"color:#64748b;font-size:13px;margin-top:4px;\">Conversion Rate</div>\n      </div>\n    </div>\n\n    ${statusRows ? `\n    <h3 style=\"color:#1e293b;margin-bottom:8px;\">Lead Status Breakdown</h3>\n    <table style=\"width:100%;border-collapse:collapse;margin-bottom:24px;\">\n      <thead>\n        <tr style=\"background:#f1f5f9;\">\n          <th style=\"padding:8px 12px;border:1px solid #e2e8f0;text-align:left;\">Status</th>\n          <th style=\"padding:8px 12px;border:1px solid #e2e8f0;text-align:center;\">Count</th>\n        </tr>\n      </thead>\n      <tbody>${statusRows}</tbody>\n    </table>` : ''}\n\n    ${dailyRows ? `\n    <h3 style=\"color:#1e293b;margin-bottom:8px;\">Last 7 Days Activity</h3>\n    <table style=\"width:100%;border-collapse:collapse;margin-bottom:24px;\">\n      <thead>\n        <tr style=\"background:#f1f5f9;\">\n          <th style=\"padding:8px 12px;border:1px solid #e2e8f0;text-align:left;\">Date</th>\n          <th style=\"padding:8px 12px;border:1px solid #e2e8f0;text-align:center;\">Leads</th>\n        </tr>\n      </thead>\n      <tbody>${dailyRows}</tbody>\n    </table>` : ''}\n\n    <p style=\"color:#94a3b8;font-size:12px;margin-top:24px;border-top:1px solid #e2e8f0;padding-top:16px;\">Sent automatically by ${bizName} via RealFlow</p>\n  </div>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    userId,\n    html,\n    subject: `Daily Summary — ${stats.todayCount ?? 0} leads today | ${bizName}`,\n    to: notifyEmail,\n    todayCount: stats.todayCount ?? 0\n  }\n}];"
+      },
+      "id": "55555555-0005-0005-0005-000000000004",
+      "name": "Build Summary Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/email/send",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "userId",
+              "value": "={{ $json.userId }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $json.to }}"
+            },
+            {
+              "name": "subject",
+              "value": "={{ $json.subject }}"
+            },
+            {
+              "name": "html",
+              "value": "={{ $json.html }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "55555555-0005-0005-0005-000000000005",
+      "name": "Send Daily Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/webhooks/n8n-callback",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "eventType", "value": "daily_summary" },
+            { "name": "status",    "value": "sent" },
+            { "name": "error",     "value": "" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "55555555-0005-0005-0005-000000000006",
+      "name": "Log to Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Every Day at 8 AM": {
+      "main": [
+        [
+          {
+            "node": "Get Lead Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Lead Stats": {
+      "main": [
+        [
+          {
+            "node": "Get Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Settings": {
+      "main": [
+        [
+          {
+            "node": "Build Summary Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Summary Email": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Daily Summary": {
+      "main": [
+        [
+          {
+            "node": "Log to Backend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "realflow-daily-summary-v2",
+  "tags": [
+    { "id": "1", "name": "realflow" },
+    { "id": "4", "name": "notification" },
+    { "id": "6", "name": "cron" }
+  ]
+}

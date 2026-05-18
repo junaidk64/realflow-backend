@@ -275,6 +275,33 @@ export const processWebhook = async (
 	}
 }
 
+export const renewGmailWatch = async (
+	req: Request,
+	res: Response,
+	next: NextFunction,
+): Promise<void> => {
+	try {
+		const userId = req.user!.userId
+
+		const connection = await GmailConnection.findOne({ userId, isActive: true })
+		if (!connection) {
+			res.status(404).json({ success: false, message: 'No active Gmail connection found' })
+			return
+		}
+
+		await setupGmailWatch(connection)
+		logger.info(`Gmail watch renewed for user ${userId}`)
+
+		res.json({
+			success: true,
+			data: { email: connection.email, watchExpiry: connection.watchExpiry },
+		})
+	} catch (error) {
+		logger.error('Gmail watch renewal failed:', error)
+		next(error)
+	}
+}
+
 export default {
 	connectGmail,
 	handleGmailOAuthCallback,
@@ -283,4 +310,5 @@ export default {
 	syncEmails,
 	getEmailStats,
 	processWebhook,
+	renewGmailWatch,
 }

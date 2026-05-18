@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express'
 import { GmailConnection } from '../models/GmailConnection'
 import { Lead } from '../models/Lead'
+import { Workflow } from '../models/Workflow'
 import { WebhookLog } from '../models/WebhookLog'
 import { addEmailProcessingJob } from '../services/queueService'
 import logger from '../utils/logger'
@@ -142,7 +143,7 @@ export const handleN8nCallback = async (
 	next: NextFunction,
 ): Promise<void> => {
 	try {
-		const { leadId, status, error } = req.body
+		const { leadId, workflowId, status, error, eventType } = req.body
 
 		await WebhookLog.create({
 			type: 'n8n_callback',
@@ -151,16 +152,31 @@ export const handleN8nCallback = async (
 			processedAt: new Date(),
 		})
 
+		const updates: Promise<unknown>[] = []
+
 		if (leadId && status === 'sent') {
-			await Lead.findByIdAndUpdate(leadId, {
-				autoReplySent: true,
-				autoReplySentAt: new Date(),
-			})
+			updates.push(
+				Lead.findByIdAndUpdate(leadId, {
+					autoReplySent: true,
+					autoReplySentAt: new Date(),
+				}),
+			)
 			logger.info(`n8n callback: auto-reply marked sent for lead ${leadId}`)
 		}
 
+		if (workflowId) {
+			updates.push(
+				Workflow.findByIdAndUpdate(workflowId, {
+					$inc: { triggerCount: 1 },
+					lastTriggered: new Date(),
+				}),
+			)
+		}
+
+		await Promise.all(updates)
+
 		if (error) {
-			logger.warn(`n8n callback error for lead ${leadId}: ${error}`)
+			logger.warn(`n8n callback error (lead=${leadId}, event=${eventType}): ${error}`)
 		}
 
 		res.json({ success: true })

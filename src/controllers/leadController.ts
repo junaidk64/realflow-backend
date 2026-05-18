@@ -237,4 +237,62 @@ export const exportLeads = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
-export default { getLeads, getLead, updateLead, deleteLead, getLeadStats, exportLeads };
+export const createLeadFromN8n = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const {
+      userId,
+      source,
+      rawEmailId,
+      rawEmailSubject,
+      rawEmailFrom,
+      customerName,
+      customerEmail,
+      customerPhone,
+      fromAddress,
+      toAddress,
+      movingDate,
+      services,
+      notes,
+      confidence,
+      status,
+    } = req.body
+
+    if (!userId) {
+      res.status(400).json({ success: false, message: 'userId is required' })
+      return
+    }
+
+    // n8n sends services as a JSON string
+    let parsedServices: string[] = []
+    if (typeof services === 'string') {
+      try { parsedServices = JSON.parse(services) } catch { parsedServices = [] }
+    } else if (Array.isArray(services)) {
+      parsedServices = services
+    }
+
+    const lead = await Lead.create({
+      userId,
+      source: source || 'email',
+      rawEmailId: rawEmailId || '',
+      rawEmailSubject: rawEmailSubject || '',
+      rawEmailFrom: rawEmailFrom || '',
+      customerName: customerName || 'Unknown',
+      customerEmail: customerEmail || '',
+      customerPhone: customerPhone || '',
+      fromAddress: fromAddress || '',
+      toAddress: toAddress || '',
+      movingDate: movingDate || '',
+      services: parsedServices,
+      notes: notes || '',
+      confidence: confidence ?? 0,
+      status: status || 'new',
+    })
+
+    logger.info(`Lead created by n8n: ${lead._id}`)
+    res.status(201).json({ success: true, data: { lead } })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export default { getLeads, getLead, updateLead, deleteLead, getLeadStats, exportLeads, createLeadFromN8n };

@@ -1,11 +1,13 @@
 import nodemailer from 'nodemailer';
 import { google } from 'googleapis';
 import { ILead } from '../models/Lead';
-import { IGmailConnection } from '../models/GmailConnection';
+import { IGmailConnection, GmailConnection } from '../models/GmailConnection';
+import { SmtpConnection } from '../models/SmtpConnection';
 import { ISettings } from '../models/Settings';
 import { Template } from '../models/Template';
 import { IWorkflowConfig } from '../models/Workflow';
 import { getAuthenticatedClient } from './gmailService';
+import { decrypt } from '../utils/encryption';
 import { config } from '../config';
 import logger from '../utils/logger';
 
@@ -396,4 +398,93 @@ export const buildAutoReplyPayload = async (
   }
 }
 
-export default { generateAutoReplyHTML, sendAutoReply, buildAutoReplyPayload };
+export interface SendEmailOptions {
+  to: string
+  subject: string
+  html: string
+  replyTo?: string
+}
+
+export interface SendEmailResult {
+  success: boolean
+  messageId?: string
+  provider: 'gmail' | 'smtp' | 'none'
+  error?: string
+}
+
+export const sendEmailForUser = async (
+  userId: string,
+  options: SendEmailOptions,
+): Promise<SendEmailResult> => {
+  const { to, subject, html, replyTo } = options
+
+  // Try Gmail OAuth first
+  const gmailConn = await GmailConnection.findOne({ userId, isActive: true })
+  if (gmailConn) {
+    try {
+      const auth = await getAuthenticatedClient(gmailConn)
+      const gmail = google.gmail({ version: 'v1', auth })
+
+      const headers = [
+        `From: ${gmailConn.email}`,
+        `To: ${to}`,
+        `Subject: ${subject}`,
+        `Content-Type: text/html; charset=UTF-8`,
+        `MIME-Version: 1.0`,
+      ]
+      if (replyTo) headers.push(`Reply-To: ${replyTo}`)
+      headers.push('', html)
+
+      const encoded = Buffer.from(headers.join('\n')).toString('base64url')
+      const resp = await gmail.users.messages.send({
+        userId: 'me',
+        requestBody: { raw: encoded },
+      })
+
+      logger.info(`Email sent via Gmail for user ${userId} to ${to}`)
+      return { success: true, messageId: resp.data.id || undefined, provider: 'gmail' }
+    } catch (err) {
+      logger.warn(`Gmail send failed for user ${userId}, trying SMTP: ${(err as Error).message}`)
+    }
+  }
+
+  // Fallback to SMTP (Titan, Zoho, Office365, etc.)
+  const smtpConn = await SmtpConnection.findOne({ userId, isActive: true })
+  if (smtpConn) {
+    try {
+      const password = decrypt(smtpConn.password)
+      const transporter = nodemailer.createTransport({
+        host: smtpConn.host,
+        port: smtpConn.port,
+        secure: smtpConn.secure,
+        auth: { user: smtpConn.user, pass: password },
+      })
+
+      const from = smtpConn.fromName
+        ? `"${smtpConn.fromName}" <${smtpConn.fromEmail}>`
+        : smtpConn.fromEmail
+
+      const info = await transporter.sendMail({
+        from,
+        to,
+        subject,
+        html,
+        ...(replyTo ? { replyTo } : {}),
+      })
+
+      logger.info(`Email sent via SMTP for user ${userId} to ${to}`)
+      return { success: true, messageId: info.messageId, provider: 'smtp' }
+    } catch (err) {
+      logger.error(`SMTP send failed for user ${userId}: ${(err as Error).message}`)
+      return { success: false, error: (err as Error).message, provider: 'smtp' }
+    }
+  }
+
+  return {
+    success: false,
+    error: 'No email provider configured. Connect Gmail or SMTP in your account settings.',
+    provider: 'none',
+  }
+}
+
+export default { generateAutoReplyHTML, sendAutoReply, buildAutoReplyPayload, sendEmailForUser };

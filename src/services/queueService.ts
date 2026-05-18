@@ -255,14 +255,17 @@ const n8nTriggerWorker = new Worker(
 				userId,
 				isActive: true,
 			})
-			payload = await buildAutoReplyPayload(
+			const autoReplyPayload = await buildAutoReplyPayload(
 				lead as never,
 				{ ...workflow.config, workflowId: workflow._id.toString() },
 				settings as never,
 				gmailConnection?.email ?? '',
 			)
+			// userId lets n8n call POST /api/email/send using the user's own credentials
+			payload = { ...autoReplyPayload, userId }
 		} else {
 			payload = {
+				userId,
 				leadId,
 				customerName: lead.customerName,
 				customerEmail: lead.customerEmail,

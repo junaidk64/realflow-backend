@@ -1,0 +1,188 @@
+{
+  "name": "RealFlow — Gmail Watch Renewal (Cron every 6 days)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 */6 * *"
+            }
+          ]
+        }
+      },
+      "id": "66666666-0006-0006-0006-000000000001",
+      "name": "Every 6 Days",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/gmail/renew-watch",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.BACKEND_SERVICE_TOKEN }}"
+            },
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "66666666-0006-0006-0006-000000000002",
+      "name": "Renew Gmail Watch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "66666666-0006-0006-0006-000000000003",
+      "name": "Renewal Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {},
+      "id": "66666666-0006-0006-0006-000000000004",
+      "name": "Watch Renewed — Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build failure alert email HTML\nconst responseData = JSON.stringify($('Renew Gmail Watch').first().json || {}, null, 2);\nconst timestamp = new Date().toLocaleString('en-GB');\n\nconst html = `<!DOCTYPE html><html><body style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;\"><div style=\"background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:20px;\"><h2 style=\"color:#dc2626;margin:0 0 12px;\">Gmail Watch Renewal Failed</h2><p>The scheduled Gmail watch renewal failed on <strong>${timestamp}</strong>.</p><p>Response from backend:</p><pre style=\"background:#fff;padding:12px;border-radius:4px;font-size:12px;\">${responseData}</pre><p>Please log in to your RealFlow dashboard and manually reconnect Gmail, or check your backend server logs.</p></div></body></html>`;\n\nreturn [{\n  json: {\n    userId: $env.ADMIN_USER_ID || '',\n    to: $env.ADMIN_EMAIL || '',\n    subject: 'RealFlow — Gmail Watch Renewal Failed',\n    html\n  }\n}];"
+      },
+      "id": "66666666-0006-0006-0006-000000000005",
+      "name": "Build Failure Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/email/send",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "userId",
+              "value": "={{ $json.userId }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $json.to }}"
+            },
+            {
+              "name": "subject",
+              "value": "={{ $json.subject }}"
+            },
+            {
+              "name": "html",
+              "value": "={{ $json.html }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "66666666-0006-0006-0006-000000000006",
+      "name": "Alert Admin — Renewal Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 420]
+    }
+  ],
+  "connections": {
+    "Every 6 Days": {
+      "main": [
+        [
+          {
+            "node": "Renew Gmail Watch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renew Gmail Watch": {
+      "main": [
+        [
+          {
+            "node": "Renewal Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renewal Successful?": {
+      "main": [
+        [
+          {
+            "node": "Watch Renewed — Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Failure Alert": {
+      "main": [
+        [
+          {
+            "node": "Alert Admin — Renewal Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "realflow-gmail-watch-renewal-v2",
+  "tags": [
+    { "id": "1", "name": "realflow" },
+    { "id": "6", "name": "cron" },
+    { "id": "7", "name": "gmail" }
+  ]
+}

@@ -1,13 +1,13 @@
 import { Router } from 'express'
 import {
-  adminListTemplates,
-  approveTemplate,
-  rejectTemplate,
+	adminListTemplates,
+	approveTemplate,
+	rejectTemplate,
 } from '../controllers/adminTemplateController'
-import { verifyToken, requireRole } from '../middlewares/auth'
+import { requireRole, verifyToken } from '../middlewares/auth'
 import { apiLimiter } from '../middlewares/rateLimiter'
 
-const router = Router()
+const router: Router = Router()
 
 router.use(verifyToken)
 router.use(requireRole(['admin']))

@@ -12,9 +12,11 @@ import logger from './utils/logger'
 
 // Routes
 import authRoutes from './routes/auth'
+import emailRoutes from './routes/email'
 import gmailRoutes from './routes/gmail'
 import leadRoutes from './routes/leads'
 import settingsRoutes from './routes/settings'
+import smtpRoutes from './routes/smtp'
 import templateRoutes from './routes/templates'
 import adminTemplateRoutes from './routes/adminTemplates'
 import webhookRoutes from './routes/webhooks'
@@ -74,12 +76,14 @@ app.get('/health', (_req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes)
+app.use('/api/email', emailRoutes)
 app.use('/api/gmail', gmailRoutes)
 app.use('/api/leads', leadRoutes)
+app.use('/api/settings', settingsRoutes)
+app.use('/api/smtp', smtpRoutes)
 app.use('/api/templates', templateRoutes)
 app.use('/api/admin/templates', adminTemplateRoutes)
 app.use('/api/workflows', workflowRoutes)
-app.use('/api/settings', settingsRoutes)
 app.use('/api/webhooks', webhookRoutes)
 app.post('/api/recieved', (req, res) => {
 	logger.info('Received email data:', req.body)

@@ -1,0 +1,215 @@
+{
+  "name": "RealFlow — Lead Extraction (Email Parser)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "realflow/lead-extract",
+        "responseMode": "onReceived",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "id": "44444444-0004-0004-0004-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "dddddddd-dddd-dddd-dddd-dddddddddddd"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * Extract structured lead data from raw email body.\n * Input: { emailId, from, subject, body, receivedAt, userId? }\n * Output: lead fields ready for POST /api/leads\n */\nconst input = $input.item.json;\nconst body   = input.body    || '';\nconst subject = input.subject || '';\nconst fromAddr = input.from   || '';\n\nfunction extract(pattern, text, group) {\n  const m = text.match(pattern);\n  return m ? m[group || 1].trim() : '';\n}\n\n// ─── Customer name ───────────────────────────────────────────────────────────\nconst customerName =\n  extract(/(?:name|customer|client|contact)\\s*[:–-]\\s*([A-Z][\\w\\s'-]{2,40})/i, body) ||\n  extract(/^([A-Z][a-z]+ [A-Z][a-z]+(?:\\s[A-Z][a-z]+)?)/m, body) ||\n  extract(/([A-Z][a-z]+ [A-Z][a-z]+)\\s*(?:would like|wants to|is looking)/i, body) ||\n  'Unknown';\n\n// ─── Email ────────────────────────────────────────────────────────────────────\nconst customerEmail =\n  extract(/(?:email|e-mail)\\s*[:–-]\\s*([\\w.+%-]+@[\\w.-]+\\.[a-zA-Z]{2,})/i, body) ||\n  extract(/([\\w.+%-]+@[\\w.-]+\\.[a-zA-Z]{2,})/i, body) ||\n  (() => { const m = fromAddr.match(/<([^>]+)>/); return m ? m[1] : fromAddr; })();\n\n// ─── Phone ───────────────────────────────────────────────────────────────────\nconst customerPhone =\n  extract(/(?:phone|tel|mobile|call|number)\\s*[:–-]\\s*([+\\d][\\d\\s().+-]{6,20})/i, body) ||\n  extract(/(?<![\\w@])([+]?(?:\\d[\\s.-]?){9,14}\\d)(?![\\w@])/i, body);\n\n// ─── From address ─────────────────────────────────────────────────────────────\nconst fromAddress =\n  extract(/(?:from|moving from|collecting from|pickup address|collection address|from address)\\s*[:–-]\\s*([^\\n]{5,100})/i, body) ||\n  extract(/(?:from|origin)\\s*[:–-]\\s*([\\w\\s,]+(?:road|street|avenue|lane|drive|close|way|place|crescent|court|terrace|grove|park|gardens|square|hill|view|rise|walk)[\\w\\s,]*)/i, body);\n\n// ─── To address ───────────────────────────────────────────────────────────────\nconst toAddress =\n  extract(/(?:to|moving to|delivering to|delivery address|destination address|to address)\\s*[:–-]\\s*([^\\n]{5,100})/i, body) ||\n  extract(/(?:to|destination)\\s*[:–-]\\s*([\\w\\s,]+(?:road|street|avenue|lane|drive|close|way|place|crescent|court|terrace|grove|park|gardens|square|hill|view|rise|walk)[\\w\\s,]*)/i, body);\n\n// ─── Moving date ──────────────────────────────────────────────────────────────\nconst movingDate =\n  extract(/(?:date|moving date|removal date|move date|date of move)\\s*[:–-]?\\s*(\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4})/i, body) ||\n  extract(/(?:date|moving date|removal date)\\s*[:–-]?\\s*(\\d{4}-\\d{2}-\\d{2})/i, body) ||\n  extract(/(\\d{1,2}(?:st|nd|rd|th)?\\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\\s+\\d{4})/i, body);\n\n// ─── Services ─────────────────────────────────────────────────────────────────\nconst services = [];\nif (/packing|pack\\b/i.test(body))       services.push('Packing');\nif (/unpack/i.test(body))              services.push('Unpacking');\nif (/storage/i.test(body))             services.push('Storage');\nif (/assemble|disassemble|assembly/i.test(body)) services.push('Assembly');\nif (/clean/i.test(body))              services.push('Cleaning');\nif (/piano/i.test(body))              services.push('Piano Moving');\nif (/man.*van|van.*man/i.test(body))   services.push('Man and Van');\nif (/office|commercial/i.test(body))   services.push('Office Move');\n\n// ─── Confidence score ─────────────────────────────────────────────────────────\nlet confidence = 20;\nif (customerName !== 'Unknown') confidence += 15;\nif (customerEmail)   confidence += 15;\nif (customerPhone)   confidence += 10;\nif (fromAddress)     confidence += 15;\nif (toAddress)       confidence += 15;\nif (movingDate)      confidence += 10;\n\n// Boost for known lead-source senders\nconst knownSources = [\n  'comparemymove.com', 'anyvan.com', 'checkatrade.com',\n  'rated.people', 'trustpilot', 'bark.com', 'quotemyremoval.co.uk'\n];\nif (knownSources.some(src => fromAddr.toLowerCase().includes(src))) confidence = Math.min(confidence + 20, 95);\n\nreturn [{\n  json: {\n    userId:           input.userId || '',\n    source:           'email',\n    rawEmailId:       input.emailId || '',\n    rawEmailSubject:  subject,\n    rawEmailFrom:     fromAddr,\n    customerName,\n    customerEmail,\n    customerPhone:    customerPhone || '',\n    fromAddress:      fromAddress  || '',\n    toAddress:        toAddress    || '',\n    movingDate:       movingDate   || '',\n    services,\n    notes:            body.substring(0, 1000),\n    confidence,\n    status:           'new'\n  }\n}];"
+      },
+      "id": "44444444-0004-0004-0004-000000000002",
+      "name": "Extract Lead Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.confidence }}",
+              "operation": "largerEqual",
+              "value2": 40
+            }
+          ]
+        }
+      },
+      "id": "44444444-0004-0004-0004-000000000003",
+      "name": "Confidence Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BACKEND_URL }}/api/leads",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "source",          "value": "={{ $json.source }}" },
+            { "name": "rawEmailId",      "value": "={{ $json.rawEmailId }}" },
+            { "name": "rawEmailSubject", "value": "={{ $json.rawEmailSubject }}" },
+            { "name": "rawEmailFrom",    "value": "={{ $json.rawEmailFrom }}" },
+            { "name": "customerName",    "value": "={{ $json.customerName }}" },
+            { "name": "customerEmail",   "value": "={{ $json.customerEmail }}" },
+            { "name": "customerPhone",   "value": "={{ $json.customerPhone }}" },
+            { "name": "fromAddress",     "value": "={{ $json.fromAddress }}" },
+            { "name": "toAddress",       "value": "={{ $json.toAddress }}" },
+            { "name": "movingDate",      "value": "={{ $json.movingDate }}" },
+            { "name": "services",        "value": "={{ JSON.stringify($json.services) }}" },
+            { "name": "notes",           "value": "={{ $json.notes }}" },
+            { "name": "confidence",      "value": "={{ $json.confidence }}" },
+            { "name": "status",          "value": "new" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-n8n-secret",
+              "value": "={{ $env.N8N_CALLBACK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "44444444-0004-0004-0004-000000000004",
+      "name": "Create Lead in Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "44444444-0004-0004-0004-000000000005",
+      "name": "Lead Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL }}/webhook/realflow/auto-reply",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "triggerAutoReply",
+              "value": "true"
+            },
+            {
+              "name": "leadId",
+              "value": "={{ $json.data.lead._id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "44444444-0004-0004-0004-000000000006",
+      "name": "Trigger Auto-Reply via Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1340, 100],
+      "notes": "Optional: signal the backend to trigger auto-reply for this new lead"
+    },
+    {
+      "parameters": {},
+      "id": "44444444-0004-0004-0004-000000000007",
+      "name": "Low Confidence — Skip",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [900, 420]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Confidence Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence Check": {
+      "main": [
+        [
+          {
+            "node": "Create Lead in Backend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Low Confidence — Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Lead in Backend": {
+      "main": [
+        [
+          {
+            "node": "Lead Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Created?": {
+      "main": [
+        [
+          {
+            "node": "Trigger Auto-Reply via Backend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "realflow-lead-extraction-v1",
+  "tags": [
+    { "id": "1", "name": "realflow" },
+    { "id": "5", "name": "lead-extraction" }
+  ]
+}

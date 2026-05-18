@@ -1,21 +1,24 @@
-import { Router } from 'express';
+import { Router } from 'express'
 import {
-  handleGmailWebhook,
-  handleN8nWebhook,
-  handleN8nCallback,
-  getWebhookLogs,
-} from '../controllers/webhookController';
-import { verifyToken } from '../middlewares/auth';
-import { webhookLimiter } from '../middlewares/rateLimiter';
+	getWebhookLogs,
+	handleGmailWebhook,
+	handleN8nCallback,
+	handleN8nWebhook,
+} from '../controllers/webhookController'
+import { verifyToken } from '../middlewares/auth'
+import { n8nAuth } from '../middlewares/n8nAuth'
+import { webhookLimiter } from '../middlewares/rateLimiter'
 
-const router = Router();
+const router: Router = Router()
 
-// Public webhook endpoints (secured by payload verification)
-router.post('/gmail', webhookLimiter, handleGmailWebhook);
-router.post('/n8n', webhookLimiter, handleN8nWebhook);
-router.post('/n8n-callback', webhookLimiter, handleN8nCallback);
+// Gmail push notifications (verified by Google pubsub token)
+router.post('/gmail', webhookLimiter, handleGmailWebhook)
+
+// n8n callbacks — secured by x-n8n-secret header
+router.post('/n8n', webhookLimiter, n8nAuth, handleN8nWebhook)
+router.post('/n8n-callback', webhookLimiter, n8nAuth, handleN8nCallback)
 
 // Protected log endpoint
-router.get('/logs', verifyToken, getWebhookLogs);
+router.get('/logs', verifyToken, getWebhookLogs)
 
-export default router;
+export default router

@@ -1,18 +1,18 @@
 import { Router } from 'express'
 import {
-  getTemplates,
-  getTemplate,
-  createTemplate,
-  updateTemplate,
-  deleteTemplate,
-  publishTemplate,
-  getPublicTemplates,
-  renderTemplate,
+	createTemplate,
+	deleteTemplate,
+	getPublicTemplates,
+	getTemplate,
+	getTemplates,
+	publishTemplate,
+	renderTemplate,
+	updateTemplate,
 } from '../controllers/templateController'
 import { verifyToken } from '../middlewares/auth'
 import { apiLimiter } from '../middlewares/rateLimiter'
 
-const router = Router()
+const router: Router = Router()
 
 router.use(verifyToken)
 
