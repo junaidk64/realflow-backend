@@ -21,6 +21,7 @@ import templateRoutes from './routes/templates'
 import adminTemplateRoutes from './routes/adminTemplates'
 import webhookRoutes from './routes/webhooks'
 import workflowRoutes from './routes/workflows'
+import notificationRoutes from './routes/notifications'
 
 // Jobs
 import { startGmailSyncJob } from './jobs/gmailSyncJob'
@@ -85,6 +86,7 @@ app.use('/api/templates', templateRoutes)
 app.use('/api/admin/templates', adminTemplateRoutes)
 app.use('/api/workflows', workflowRoutes)
 app.use('/api/webhooks', webhookRoutes)
+app.use('/api/notifications', notificationRoutes)
 app.post('/api/recieved', (req, res) => {
 	logger.info('Received email data:', req.body)
 	res.json({ success: true })

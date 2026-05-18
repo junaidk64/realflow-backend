@@ -10,6 +10,7 @@ import { buildAutoReplyPayload, sendAutoReply } from './emailService'
 import { processNewEmails } from './gmailService'
 import { extractLeadFromEmail } from './leadExtractionService'
 import { triggerWebhook } from './n8nService'
+import { createNotification } from './notificationService'
 
 const redisConnection = {
 	host: new URL(config.redis.url).hostname,
@@ -147,6 +148,14 @@ const leadExtractionWorker = new Worker(
 
 		logger.info(`Lead created: ${lead._id} from ${fromEmail}`)
 
+		await createNotification(
+			userId,
+			'new_lead',
+			'New Lead Detected',
+			`${lead.customerName} — ${(lead.services ?? []).join(', ')} from ${lead.fromAddress}`,
+			String(lead._id),
+		)
+
 		// Queue auto-reply if enabled
 		if (settings?.autoReply && result.leadData.customerEmail) {
 			await autoReplyQueue.add('send-auto-reply', {
@@ -199,6 +208,7 @@ const autoReplyWorker = new Worker(
 			lead,
 			gmailConnection,
 			settings || undefined,
+			userId,
 		)
 
 		if (result.success) {
@@ -222,6 +232,14 @@ const autoReplyWorker = new Worker(
 			})
 
 			logger.info(`Auto-reply sent for lead ${leadId} to ${lead.customerEmail}`)
+
+			await createNotification(
+				userId,
+				'auto_reply_sent',
+				'Auto Reply Sent',
+				`Reply sent to ${lead.customerName} (${lead.customerEmail})`,
+				String(lead._id),
+			)
 		} else {
 			logger.error(
 				`Failed to send auto-reply for lead ${leadId}: ${result.error}`,
@@ -293,6 +311,14 @@ const n8nTriggerWorker = new Worker(
 				$inc: { triggerCount: 1 },
 				lastTriggered: new Date(),
 			})
+
+			await createNotification(
+				userId,
+				'workflow_triggered',
+				'Workflow Triggered',
+				`n8n workflow fired for ${lead.customerName}`,
+				String(lead._id),
+			)
 		}
 
 		return result
