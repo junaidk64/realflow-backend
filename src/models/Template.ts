@@ -5,6 +5,7 @@ export type TemplateStatus = 'draft' | 'pending' | 'approved' | 'rejected'
 
 export interface ITemplate extends Document {
   userId: mongoose.Types.ObjectId
+  organizationId: mongoose.Types.ObjectId | null
   name: string
   description: string
   htmlContent: string
@@ -23,6 +24,12 @@ const TemplateSchema = new Schema<ITemplate>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+      index: true,
+    },
+    organizationId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Organization',
+      default: null,
       index: true,
     },
     name: {
@@ -71,8 +78,9 @@ const TemplateSchema = new Schema<ITemplate>(
   },
 )
 
+TemplateSchema.index({ organizationId: 1, status: 1 })
+TemplateSchema.index({ organizationId: 1, businessType: 1 })
 TemplateSchema.index({ userId: 1, status: 1 })
-TemplateSchema.index({ userId: 1, businessType: 1 })
 TemplateSchema.index({ status: 1, businessType: 1 })
 
 export const Template = mongoose.model<ITemplate>('Template', TemplateSchema)

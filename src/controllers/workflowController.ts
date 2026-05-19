@@ -16,7 +16,7 @@ export const getWorkflows = async (
 	next: NextFunction,
 ): Promise<void> => {
 	try {
-		const workflows = await Workflow.find({ userId: req.user!.userId }).sort({
+		const workflows = await Workflow.find({ organizationId: req.user!.organizationId }).sort({
 			createdAt: -1,
 		})
 		res.json({ success: true, data: { workflows } })
@@ -52,6 +52,7 @@ export const createWorkflow = async (
 
 		const workflow = await Workflow.create({
 			userId: req.user!.userId,
+			organizationId: req.user!.organizationId,
 			name,
 			description: description || '',
 			n8nWorkflowId,
@@ -75,7 +76,7 @@ export const updateWorkflow = async (
 		const { id } = req.params
 		const { name, description, webhookUrl, isActive, config: wfConfig } = req.body
 
-		const workflow = await Workflow.findOne({ _id: id, userId: req.user!.userId })
+		const workflow = await Workflow.findOne({ _id: id, organizationId: req.user!.organizationId })
 
 		if (!workflow) {
 			res.status(404).json({ success: false, message: 'Workflow not found' })
@@ -108,7 +109,7 @@ export const deleteWorkflow = async (
 		const { id } = req.params
 		const workflow = await Workflow.findOne({
 			_id: id,
-			userId: req.user!.userId,
+			organizationId: req.user!.organizationId,
 		})
 
 		if (!workflow) {
@@ -143,7 +144,7 @@ export const toggleWorkflow = async (
 		const { id } = req.params
 		const workflow = await Workflow.findOne({
 			_id: id,
-			userId: req.user!.userId,
+			organizationId: req.user!.organizationId,
 		})
 
 		if (!workflow) {
@@ -196,7 +197,7 @@ export const getWorkflowExecutions = async (
 		const { id } = req.params
 		const workflow = await Workflow.findOne({
 			_id: id,
-			userId: req.user!.userId,
+			organizationId: req.user!.organizationId,
 		})
 
 		if (!workflow) {

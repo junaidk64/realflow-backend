@@ -5,9 +5,17 @@ import logger from '../utils/logger';
 
 export const getSettings = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    let settings = await Settings.findOne({ userId: req.user!.userId });
+    const orgId = req.user!.organizationId;
+    let settings = await Settings.findOne({ organizationId: orgId });
     if (!settings) {
-      settings = await Settings.create({ userId: req.user!.userId });
+      // Fall back for docs created before multi-tenancy; backfill organizationId
+      settings = await Settings.findOne({ userId: req.user!.userId });
+      if (settings) {
+        settings.organizationId = orgId as any;
+        await settings.save();
+      } else {
+        settings = await Settings.create({ userId: req.user!.userId, organizationId: orgId });
+      }
     }
     res.json({ success: true, data: { settings } });
   } catch (error) {
@@ -31,8 +39,8 @@ export const updateSettings = async (req: Request, res: Response, next: NextFunc
     if (businessName !== undefined) updateData.businessName = businessName;
 
     const settings = await Settings.findOneAndUpdate(
-      { userId: req.user!.userId },
-      { $set: updateData },
+      { organizationId: req.user!.organizationId },
+      { $set: updateData, $setOnInsert: { userId: req.user!.userId } },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
@@ -80,7 +88,7 @@ export const testEmailTemplate = async (req: Request, res: Response, next: NextF
   try {
     const { templateOverride } = req.body;
 
-    const settings = await Settings.findOne({ userId: req.user!.userId });
+    const settings = await Settings.findOne({ organizationId: req.user!.organizationId });
     const businessType = settings?.businessType || 'general';
     const sampleLead = SAMPLE_LEADS[businessType] || SAMPLE_LEADS.general;
 
@@ -101,8 +109,8 @@ export const updateEmailSignature = async (req: Request, res: Response, next: Ne
     const { signature } = req.body;
 
     const settings = await Settings.findOneAndUpdate(
-      { userId: req.user!.userId },
-      { emailSignature: signature },
+      { organizationId: req.user!.organizationId },
+      { $set: { emailSignature: signature }, $setOnInsert: { userId: req.user!.userId } },
       { new: true, upsert: true }
     );
 

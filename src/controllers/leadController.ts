@@ -6,7 +6,7 @@ import logger from '../utils/logger';
 
 export const getLeads = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = req.user!.userId;
+    const organizationId = req.user!.organizationId;
     const {
       page = '1',
       limit = '20',
@@ -22,7 +22,7 @@ export const getLeads = async (req: Request, res: Response, next: NextFunction):
     const limitNum = Math.min(100, parseInt(limit, 10));
     const skip = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = { userId };
+    const filter: Record<string, unknown> = { organizationId };
     if (status) filter.status = status;
     if (startDate || endDate) {
       filter.createdAt = {};
@@ -79,7 +79,7 @@ export const getLead = async (req: Request, res: Response, next: NextFunction): 
       return;
     }
 
-    const lead = await Lead.findOne({ _id: id, userId: req.user!.userId });
+    const lead = await Lead.findOne({ _id: id, organizationId: req.user!.organizationId });
     if (!lead) {
       res.status(404).json({ success: false, message: 'Lead not found' });
       return;
@@ -110,7 +110,7 @@ export const updateLead = async (req: Request, res: Response, next: NextFunction
     if (notes !== undefined) updateData.notes = notes;
 
     const lead = await Lead.findOneAndUpdate(
-      { _id: id, userId: req.user!.userId },
+      { _id: id, organizationId: req.user!.organizationId },
       updateData,
       { new: true }
     );
@@ -129,7 +129,7 @@ export const updateLead = async (req: Request, res: Response, next: NextFunction
 export const deleteLead = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
-    const lead = await Lead.findOneAndDelete({ _id: id, userId: req.user!.userId });
+    const lead = await Lead.findOneAndDelete({ _id: id, organizationId: req.user!.organizationId });
     if (!lead) {
       res.status(404).json({ success: false, message: 'Lead not found' });
       return;
@@ -142,7 +142,7 @@ export const deleteLead = async (req: Request, res: Response, next: NextFunction
 
 export const getLeadStats = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = req.user!.userId;
+    const organizationId = req.user!.organizationId;
     const now = new Date();
     const startOfDay = new Date(now); startOfDay.setHours(0, 0, 0, 0);
     const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - 7);
@@ -153,20 +153,20 @@ export const getLeadStats = async (req: Request, res: Response, next: NextFuncti
       statusCounts, autoReplySent, n8nTriggered,
       dailyLeads
     ] = await Promise.all([
-      Lead.countDocuments({ userId }),
-      Lead.countDocuments({ userId, createdAt: { $gte: startOfDay } }),
-      Lead.countDocuments({ userId, createdAt: { $gte: startOfWeek } }),
-      Lead.countDocuments({ userId, createdAt: { $gte: startOfMonth } }),
+      Lead.countDocuments({ organizationId }),
+      Lead.countDocuments({ organizationId, createdAt: { $gte: startOfDay } }),
+      Lead.countDocuments({ organizationId, createdAt: { $gte: startOfWeek } }),
+      Lead.countDocuments({ organizationId, createdAt: { $gte: startOfMonth } }),
       Lead.aggregate([
-        { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+        { $match: { organizationId } },
         { $group: { _id: '$status', count: { $sum: 1 } } },
       ]),
-      Lead.countDocuments({ userId, autoReplySent: true }),
-      Lead.countDocuments({ userId, n8nTriggered: true }),
+      Lead.countDocuments({ organizationId, autoReplySent: true }),
+      Lead.countDocuments({ organizationId, n8nTriggered: true }),
       Lead.aggregate([
         {
           $match: {
-            userId: new mongoose.Types.ObjectId(userId),
+            organizationId,
             createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
           },
         },
@@ -202,10 +202,10 @@ export const getLeadStats = async (req: Request, res: Response, next: NextFuncti
 
 export const exportLeads = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = req.user!.userId;
+    const organizationId = req.user!.organizationId;
     const { status, startDate, endDate } = req.query as Record<string, string>;
 
-    const filter: Record<string, unknown> = { userId };
+    const filter: Record<string, unknown> = { organizationId };
     if (status) filter.status = status;
     if (startDate || endDate) {
       filter.createdAt = {};

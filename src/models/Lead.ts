@@ -7,6 +7,7 @@ export type LeadSentiment = 'positive' | 'neutral' | 'negative' | 'urgent'
 
 export interface ILead extends Document {
 	userId: mongoose.Types.ObjectId
+	organizationId: mongoose.Types.ObjectId | null
 	source: LeadSource
 	rawEmailId: string
 	customerName: string
@@ -46,6 +47,12 @@ const LeadSchema = new Schema<ILead>(
 			type: Schema.Types.ObjectId,
 			ref: 'User',
 			required: true,
+		},
+		organizationId: {
+			type: Schema.Types.ObjectId,
+			ref: 'Organization',
+			default: null,
+			index: true,
 		},
 		source: {
 			type: String,
@@ -182,9 +189,10 @@ const LeadSchema = new Schema<ILead>(
 	},
 )
 
+LeadSchema.index({ organizationId: 1, createdAt: -1 })
+LeadSchema.index({ organizationId: 1, status: 1 })
+LeadSchema.index({ organizationId: 1, customerEmail: 1 })
 LeadSchema.index({ userId: 1, createdAt: -1 })
-LeadSchema.index({ userId: 1, status: 1 })
-LeadSchema.index({ userId: 1, customerEmail: 1 })
 LeadSchema.index({ rawEmailId: 1 })
 LeadSchema.index({ userId: 1, fingerprint: 1 })
 

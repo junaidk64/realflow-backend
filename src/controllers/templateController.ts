@@ -4,14 +4,14 @@ import { Template } from '../models/Template'
 
 export const getTemplates = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = req.user!.userId
+    const organizationId = req.user!.organizationId
     const { status, businessType, page = '1', limit = '20' } = req.query as Record<string, string>
 
     const pageNum = Math.max(1, parseInt(page, 10))
     const limitNum = Math.min(100, parseInt(limit, 10))
     const skip = (pageNum - 1) * limitNum
 
-    const filter: Record<string, unknown> = { userId }
+    const filter: Record<string, unknown> = { organizationId }
     if (status) filter.status = status
     if (businessType) filter.businessType = businessType
 
@@ -47,7 +47,7 @@ export const getTemplate = async (req: Request, res: Response, next: NextFunctio
       return
     }
 
-    const template = await Template.findOne({ _id: id, userId: req.user!.userId })
+    const template = await Template.findOne({ _id: id, organizationId: req.user!.organizationId })
     if (!template) {
       res.status(404).json({ success: false, message: 'Template not found' })
       return
@@ -65,6 +65,7 @@ export const createTemplate = async (req: Request, res: Response, next: NextFunc
 
     const template = await Template.create({
       userId: req.user!.userId,
+      organizationId: req.user!.organizationId,
       name,
       description,
       htmlContent,
@@ -87,7 +88,7 @@ export const updateTemplate = async (req: Request, res: Response, next: NextFunc
       return
     }
 
-    const template = await Template.findOne({ _id: id, userId: req.user!.userId })
+    const template = await Template.findOne({ _id: id, organizationId: req.user!.organizationId })
     if (!template) {
       res.status(404).json({ success: false, message: 'Template not found' })
       return
@@ -124,7 +125,7 @@ export const deleteTemplate = async (req: Request, res: Response, next: NextFunc
       return
     }
 
-    const template = await Template.findOneAndDelete({ _id: id, userId: req.user!.userId })
+    const template = await Template.findOneAndDelete({ _id: id, organizationId: req.user!.organizationId })
     if (!template) {
       res.status(404).json({ success: false, message: 'Template not found' })
       return
@@ -144,7 +145,7 @@ export const publishTemplate = async (req: Request, res: Response, next: NextFun
       return
     }
 
-    const template = await Template.findOne({ _id: id, userId: req.user!.userId })
+    const template = await Template.findOne({ _id: id, organizationId: req.user!.organizationId })
     if (!template) {
       res.status(404).json({ success: false, message: 'Template not found' })
       return

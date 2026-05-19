@@ -4,6 +4,7 @@ export type BusinessType = 'moving' | 'real_estate' | 'insurance' | 'cleaning' |
 
 export interface ISettings extends Document {
 	userId: mongoose.Types.ObjectId
+	organizationId: mongoose.Types.ObjectId | null
 	businessType: BusinessType
 	businessName: string
 	autoReply: boolean
@@ -30,6 +31,12 @@ const SettingsSchema = new Schema<ISettings>(
 			ref: 'User',
 			required: true,
 			unique: true,
+		},
+		organizationId: {
+			type: Schema.Types.ObjectId,
+			ref: 'Organization',
+			default: null,
+			sparse: true,
 		},
 		businessType: {
 			type: String,
@@ -96,6 +103,7 @@ const SettingsSchema = new Schema<ISettings>(
 )
 
 SettingsSchema.index({ userId: 1 })
+SettingsSchema.index({ organizationId: 1 }, { sparse: true })
 
 export const Settings = mongoose.model<ISettings>('Settings', SettingsSchema)
 export default Settings

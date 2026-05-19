@@ -10,6 +10,7 @@ export interface IWorkflowConfig {
 
 export interface IWorkflow extends Document {
 	userId: mongoose.Types.ObjectId
+	organizationId: mongoose.Types.ObjectId | null
 	name: string
 	description: string
 	n8nWorkflowId: string
@@ -39,6 +40,12 @@ const WorkflowSchema = new Schema<IWorkflow>(
 			type: Schema.Types.ObjectId,
 			ref: 'User',
 			required: true,
+		},
+		organizationId: {
+			type: Schema.Types.ObjectId,
+			ref: 'Organization',
+			default: null,
+			index: true,
 		},
 		name: {
 			type: String,
@@ -89,8 +96,9 @@ const WorkflowSchema = new Schema<IWorkflow>(
 	},
 )
 
+WorkflowSchema.index({ organizationId: 1 })
+WorkflowSchema.index({ organizationId: 1, isActive: 1 })
 WorkflowSchema.index({ userId: 1 })
-WorkflowSchema.index({ userId: 1, isActive: 1 })
 
 export const Workflow = mongoose.model<IWorkflow>('Workflow', WorkflowSchema)
 export default Workflow
