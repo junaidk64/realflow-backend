@@ -1,12 +1,14 @@
 import bcrypt from 'bcryptjs'
+import crypto from 'crypto'
 import { NextFunction, Request, Response } from 'express'
+import nodemailer from 'nodemailer'
 import { Resend } from 'resend'
 import { config } from '../config'
+import { getRoleLevel } from '../middlewares/requirePermission'
 import { Invitation } from '../models/Invitation'
 import { Organization } from '../models/Organization'
 import { User } from '../models/User'
 import { generateTokenPair } from '../services/authService'
-import { getRoleLevel } from '../middlewares/requirePermission'
 import logger from '../utils/logger'
 
 const resend = new Resend(config.resend.apiKey)
@@ -21,7 +23,9 @@ export const listMembers = async (
 		const members = await User.find({
 			organizationId: req.user!.organizationId,
 			isActive: true,
-		}).select('-__v -password -googleId -stripeCustomerId -stripeSubscriptionId')
+		}).select(
+			'-__v -password -googleId -stripeCustomerId -stripeSubscriptionId',
+		)
 
 		res.json({ success: true, data: { members } })
 	} catch (error) {
@@ -40,7 +44,9 @@ export const inviteMember = async (
 		const orgId = req.user!.organizationId
 
 		if (!email || !role) {
-			res.status(400).json({ success: false, message: 'email and role are required' })
+			res
+				.status(400)
+				.json({ success: false, message: 'email and role are required' })
 			return
 		}
 
@@ -54,13 +60,22 @@ export const inviteMember = async (
 		const actorLevel = getRoleLevel(req.user!.role)
 		const targetLevel = getRoleLevel(role)
 		if (targetLevel >= actorLevel) {
-			res.status(403).json({ success: false, message: 'Cannot invite a member with equal or higher role than yours' })
+			res.status(403).json({
+				success: false,
+				message: 'Cannot invite a member with equal or higher role than yours',
+			})
 			return
 		}
 
-		const existingUser = await User.findOne({ email: email.toLowerCase(), organizationId: orgId })
+		const existingUser = await User.findOne({
+			email: email.toLowerCase(),
+			organizationId: orgId,
+		})
 		if (existingUser) {
-			res.status(409).json({ success: false, message: 'User is already a member of this organization' })
+			res.status(409).json({
+				success: false,
+				message: 'User is already a member of this organization',
+			})
 			return
 		}
 
@@ -70,7 +85,10 @@ export const inviteMember = async (
 			status: 'pending',
 		})
 		if (existingInvitation) {
-			res.status(409).json({ success: false, message: 'A pending invitation already exists for this email' })
+			res.status(409).json({
+				success: false,
+				message: 'A pending invitation already exists for this email',
+			})
 			return
 		}
 
@@ -93,11 +111,21 @@ export const inviteMember = async (
 		const inviteLink = `${config.frontendUrl}/accept-invite?token=${token}`
 
 		try {
-			await resend.emails.send({
-				from: `LeadFlow Pro <noreply@${config.smtp.host || 'mail.leadflowpro.com'}>`,
-				to: email,
-				subject: `You've been invited to join ${businessName} on LeadFlow Pro`,
-				html: `
+			await nodemailer
+				.createTransport({
+					host: config.smtp.host,
+					port: config.smtp.port,
+					secure: false, // true for 465, false for other ports
+					auth: {
+						user: config.smtp.user,
+						pass: config.smtp.pass,
+					},
+				})
+				.sendMail({
+					from: `LeadFlow Pro <noreply@${config.smtp.host || 'mail.leadflowpro.com'}>`,
+					to: email,
+					subject: `You've been invited to join ${businessName} on LeadFlow Pro`,
+					html: `
 					<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
 						<h2>You're invited!</h2>
 						<p>You've been invited to join <strong>${businessName}</strong> on LeadFlow Pro as a <strong>${role}</strong>.</p>
@@ -108,7 +136,7 @@ export const inviteMember = async (
 						<p style="color:#6b7280;font-size:14px">Or copy this link: ${inviteLink}</p>
 					</div>
 				`,
-			})
+				})
 		} catch (emailErr) {
 			logger.warn('Failed to send invitation email:', emailErr)
 		}
@@ -130,21 +158,32 @@ export const updateMember = async (
 		const { role, permissions, isActive } = req.body
 		const actorLevel = getRoleLevel(req.user!.role)
 
-		const target = await User.findOne({ _id: id, organizationId: req.user!.organizationId })
+		const target = await User.findOne({
+			_id: id,
+			organizationId: req.user!.organizationId,
+		})
 		if (!target) {
-			res.status(404).json({ success: false, message: 'User not found in your organization' })
+			res.status(404).json({
+				success: false,
+				message: 'User not found in your organization',
+			})
 			return
 		}
 
 		if (target.role === 'root') {
-			res.status(403).json({ success: false, message: 'Cannot modify the root user' })
+			res
+				.status(403)
+				.json({ success: false, message: 'Cannot modify the root user' })
 			return
 		}
 
 		if (role !== undefined) {
 			const newLevel = getRoleLevel(role)
 			if (newLevel >= actorLevel) {
-				res.status(403).json({ success: false, message: 'Cannot set a role equal to or higher than your own' })
+				res.status(403).json({
+					success: false,
+					message: 'Cannot set a role equal to or higher than your own',
+				})
 				return
 			}
 			target.role = role
@@ -177,18 +216,28 @@ export const removeMember = async (
 		const { id } = req.params
 
 		if (id === req.user!.userId) {
-			res.status(403).json({ success: false, message: 'Cannot remove yourself' })
+			res
+				.status(403)
+				.json({ success: false, message: 'Cannot remove yourself' })
 			return
 		}
 
-		const target = await User.findOne({ _id: id, organizationId: req.user!.organizationId })
+		const target = await User.findOne({
+			_id: id,
+			organizationId: req.user!.organizationId,
+		})
 		if (!target) {
-			res.status(404).json({ success: false, message: 'User not found in your organization' })
+			res.status(404).json({
+				success: false,
+				message: 'User not found in your organization',
+			})
 			return
 		}
 
 		if (target.role === 'root') {
-			res.status(403).json({ success: false, message: 'Cannot remove the root user' })
+			res
+				.status(403)
+				.json({ success: false, message: 'Cannot remove the root user' })
 			return
 		}
 
@@ -238,7 +287,9 @@ export const revokeInvitation = async (
 		})
 
 		if (!invitation) {
-			res.status(404).json({ success: false, message: 'Pending invitation not found' })
+			res
+				.status(404)
+				.json({ success: false, message: 'Pending invitation not found' })
 			return
 		}
 
@@ -267,19 +318,25 @@ export const acceptInvite = async (
 
 		const invitation = await Invitation.findOne({ token })
 		if (!invitation) {
-			res.status(404).json({ success: false, message: 'Invalid invitation token' })
+			res
+				.status(404)
+				.json({ success: false, message: 'Invalid invitation token' })
 			return
 		}
 
 		if (invitation.status !== 'pending') {
-			res.status(400).json({ success: false, message: `Invitation is ${invitation.status}` })
+			res
+				.status(400)
+				.json({ success: false, message: `Invitation is ${invitation.status}` })
 			return
 		}
 
 		if (invitation.expiresAt < new Date()) {
 			invitation.status = 'expired'
 			await invitation.save()
-			res.status(400).json({ success: false, message: 'Invitation has expired' })
+			res
+				.status(400)
+				.json({ success: false, message: 'Invitation has expired' })
 			return
 		}
 
@@ -295,11 +352,15 @@ export const acceptInvite = async (
 		} else {
 			// New user
 			if (!name) {
-				res.status(400).json({ success: false, message: 'name is required for new users' })
+				res
+					.status(400)
+					.json({ success: false, message: 'name is required for new users' })
 				return
 			}
 
-			const hashedPassword = password ? await bcrypt.hash(password, 10) : undefined
+			const hashedPassword = password
+				? await bcrypt.hash(password, 10)
+				: undefined
 
 			user = await User.create({
 				email: invitation.email,
