@@ -240,11 +240,20 @@ ${renderDetailRows(details)}
 </td>
 </tr>` : ''
 
-  const customMessageBlock = settings?.autoReplyTemplate ? `
+  const autoReplyTemplateVars: Record<string, string> = {
+    customerName,
+    businessName: companyName,
+    emailSignature,
+  }
+  const resolvedAutoReplyTemplate = settings?.autoReplyTemplate
+    ? settings.autoReplyTemplate.replace(/\{\{(\w+)\}\}/g, (_, key) => autoReplyTemplateVars[key] ?? '')
+    : ''
+
+  const customMessageBlock = resolvedAutoReplyTemplate ? `
 <tr>
 <td style="padding-bottom:32px;">
 <div style="background:rgba(102,126,234,0.1);border:1px solid rgba(102,126,234,0.2);border-radius:12px;padding:20px;">
-<p style="margin:0;font-size:15px;color:rgba(255,255,255,0.8);line-height:1.7;">${settings.autoReplyTemplate}</p>
+<p style="margin:0;font-size:15px;color:rgba(255,255,255,0.8);line-height:1.7;">${resolvedAutoReplyTemplate}</p>
 </div>
 </td>
 </tr>` : ''
