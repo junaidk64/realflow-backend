@@ -147,6 +147,7 @@ export const triggerWebhook = async (
 	data: Record<string, unknown>,
 ): Promise<{ success: boolean; response?: unknown; error?: string }> => {
 	try {
+		logger.debug(`Triggering webhook ${webhookUrl} with data:`, data)
 		const controller = new AbortController()
 		const timeout = setTimeout(() => controller.abort(), 30000)
 		try {

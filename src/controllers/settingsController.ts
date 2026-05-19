@@ -42,28 +42,54 @@ export const updateSettings = async (req: Request, res: Response, next: NextFunc
   }
 };
 
+const SAMPLE_LEADS: Record<string, Record<string, unknown>> = {
+  moving: {
+    customerName: 'John Smith', customerEmail: 'john@example.com', customerPhone: '07700 900123',
+    fromAddress: '123 High Street, London, SW1A 1AA', toAddress: '456 Oak Avenue, Manchester, M1 1AE',
+    movingDate: '15 June 2026', services: ['Full Packing', 'Storage'],
+    businessType: 'moving',
+  },
+  real_estate: {
+    customerName: 'Sarah Johnson', customerEmail: 'sarah@example.com', customerPhone: '07700 900456',
+    businessType: 'real_estate',
+    extraFields: { propertyAddress: '14 Oak Lane, Bristol, BS1 2AB', budget: '£350,000–£400,000', viewingDate: 'Saturday 22 June', bedrooms: '3' },
+  },
+  insurance: {
+    customerName: 'Mike Davies', customerEmail: 'mike@example.com', customerPhone: '07700 900789',
+    businessType: 'insurance',
+    extraFields: { policyType: 'Car Insurance', coverageAmount: '£30,000', renewalDate: 'August 2026', currentProvider: 'Admiral' },
+  },
+  cleaning: {
+    customerName: 'Emma Wilson', customerEmail: 'emma@example.com', customerPhone: '07700 900321',
+    businessType: 'cleaning',
+    extraFields: { serviceDate: '25 June 2026', propertyType: 'End of tenancy', rooms: '4', frequency: 'One-off' },
+  },
+  legal: {
+    customerName: 'Robert Chen', customerEmail: 'robert@example.com', customerPhone: '07700 900654',
+    businessType: 'legal',
+    extraFields: { caseType: 'Conveyancing', urgency: 'Medium', consultationDate: 'Next week' },
+  },
+  general: {
+    customerName: 'Alex Turner', customerEmail: 'alex@example.com', customerPhone: '07700 900987',
+    businessType: 'general',
+    extraFields: { serviceRequired: 'General enquiry', preferredDate: 'This week', budget: '£500' },
+  },
+};
+
 export const testEmailTemplate = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { templateOverride } = req.body;
 
-    const sampleLead = {
-      customerName: 'John Smith',
-      customerEmail: 'john.smith@example.com',
-      customerPhone: '07700 900123',
-      movingDate: '15th June 2025',
-      fromAddress: '123 High Street, London, SW1A 1AA',
-      toAddress: '456 New Road, Manchester, M1 1AE',
-      services: ['Full Packing', 'Storage'],
-      notes: 'Please handle fragile items with extra care.',
-    };
-
     const settings = await Settings.findOne({ userId: req.user!.userId });
+    const businessType = settings?.businessType || 'general';
+    const sampleLead = SAMPLE_LEADS[businessType] || SAMPLE_LEADS.general;
+
     const previewSettings = {
       ...(settings?.toObject() || {}),
       ...(templateOverride ? { autoReplyTemplate: templateOverride } : {}),
     };
 
-    const html = generateAutoReplyHTML(sampleLead, previewSettings);
+    const html = generateAutoReplyHTML(sampleLead as never, previewSettings);
     res.json({ success: true, data: { html } });
   } catch (error) {
     next(error);

@@ -39,11 +39,13 @@ export const getLeads = async (req: Request, res: Response, next: NextFunction):
       ];
     }
 
+    const ALLOWED_SORT_FIELDS = ['createdAt', 'updatedAt', 'aiScore', 'confidence', 'customerName', 'status']
+    const safeSortBy = ALLOWED_SORT_FIELDS.includes(sortBy) ? sortBy : 'createdAt'
     const sortDirection = sortOrder === 'asc' ? 1 : -1;
 
     const [leads, total] = await Promise.all([
       Lead.find(filter)
-        .sort({ [sortBy]: sortDirection })
+        .sort({ [safeSortBy]: sortDirection })
         .skip(skip)
         .limit(limitNum)
         .lean(),
@@ -214,19 +216,27 @@ export const exportLeads = async (req: Request, res: Response, next: NextFunctio
     const leads = await Lead.find(filter).sort({ createdAt: -1 }).lean();
 
     const csvRows = [
-      'Name,Email,Phone,Moving Date,From,To,Services,Status,Auto Reply,Created',
-      ...leads.map(l => [
-        `"${l.customerName || ''}"`,
-        `"${l.customerEmail || ''}"`,
-        `"${l.customerPhone || ''}"`,
-        `"${l.movingDate || ''}"`,
-        `"${l.fromAddress || ''}"`,
-        `"${l.toAddress || ''}"`,
-        `"${(l.services || []).join('; ')}"`,
-        l.status,
-        l.autoReplySent ? 'Yes' : 'No',
-        new Date(l.createdAt).toISOString(),
-      ].join(',')),
+      'Name,Email,Phone,Business Type,AI Score,Sentiment,Moving Date,From,To,Services,Status,Auto Reply,Created',
+      ...leads.map(l => {
+        const extra = l.extraFields
+          ? Object.values(l.extraFields as Record<string, unknown>).filter(Boolean).join('; ')
+          : ''
+        return [
+          `"${l.customerName || ''}"`,
+          `"${l.customerEmail || ''}"`,
+          `"${l.customerPhone || ''}"`,
+          `"${l.businessType || ''}"`,
+          `"${l.aiScore ?? ''}"`,
+          `"${l.sentiment || ''}"`,
+          `"${l.movingDate || extra}"`,
+          `"${l.fromAddress || ''}"`,
+          `"${l.toAddress || ''}"`,
+          `"${(l.services || []).join('; ')}"`,
+          l.status,
+          l.autoReplySent ? 'Yes' : 'No',
+          new Date(l.createdAt).toISOString(),
+        ].join(',')
+      }),
     ];
 
     res.setHeader('Content-Type', 'text/csv');

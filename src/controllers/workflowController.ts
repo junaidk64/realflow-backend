@@ -73,7 +73,7 @@ export const updateWorkflow = async (
 ): Promise<void> => {
 	try {
 		const { id } = req.params
-		const { name, description, webhookUrl, config: wfConfig } = req.body
+		const { name, description, webhookUrl, isActive, config: wfConfig } = req.body
 
 		const workflow = await Workflow.findOne({ _id: id, userId: req.user!.userId })
 
@@ -85,6 +85,7 @@ export const updateWorkflow = async (
 		if (name !== undefined) workflow.name = name
 		if (description !== undefined) workflow.description = description
 		if (webhookUrl !== undefined) workflow.webhookUrl = webhookUrl
+		if (isActive !== undefined) workflow.isActive = Boolean(isActive)
 		if (wfConfig !== undefined) {
 			// Deep-merge so partial updates don't wipe other config keys
 			const current = workflow.toObject().config ?? {}

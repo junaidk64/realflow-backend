@@ -239,7 +239,8 @@ const leadExtractionWorker = new Worker(
 
 		const activeWorkflows = await Workflow.find({ userId, isActive: true })
 		for (const workflow of activeWorkflows) {
-			if (workflow.webhookUrl) {
+			// auto_reply is handled by the backend directly — skip to prevent double-send
+			if (workflow.webhookUrl && workflow.type !== 'auto_reply') {
 				await n8nTriggerQueue.add('trigger-n8n', {
 					leadId: lead._id,
 					userId,
@@ -283,7 +284,7 @@ const autoReplyWorker = new Worker(
 				from: gmailConnection.email,
 				to: lead.customerEmail,
 				subject: settings?.autoReplySubject || 'Thank you for your enquiry!',
-				body: '',
+				body: result.html || '',
 				status: 'sent',
 				gmailMessageId: result.messageId || '',
 				sentAt: new Date(),

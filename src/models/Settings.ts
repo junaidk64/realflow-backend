@@ -47,7 +47,7 @@ const SettingsSchema = new Schema<ISettings>(
 		autoReplyTemplate: {
 			type: String,
 			default:
-				'Thank you for your enquiry! We have received your moving request and will get back to you within 2 hours with a competitive quote.',
+				'Thank you for your enquiry! We have received your request and will be in touch within 2 hours with our best offer.',
 		},
 		autoReplySubject: {
 			type: String,

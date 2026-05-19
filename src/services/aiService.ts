@@ -31,8 +31,8 @@ export async function extractLeadFromEmail(
 ): Promise<AiLeadResult> {
   const profile = LEAD_PROFILES[businessType]
 
-  // Truncate to save tokens — signal is in first 800 chars
-  const truncatedBody = emailBody.slice(0, 800)
+  // Truncate to save tokens — 1200 chars covers most emails including bottom signatures
+  const truncatedBody = emailBody.slice(0, 1200)
   const emptyFields = profile.fields.reduce<Record<string, null>>(
     (acc, f) => ({ ...acc, [f]: null }),
     {},
@@ -102,6 +102,8 @@ async function logUsage(userId: string, usage: Anthropic.Usage & { cache_read_in
   logger.debug(`AI call: ${inputTokens}in/${outputTokens}out tokens, $${costUsd.toFixed(6)}`)
 }
 
+const DIGEST_SYSTEM = 'You write concise, professional morning email digests for business owners. 2 sentences max. Plain text only, no emojis. Tone: professional and motivating.'
+
 export async function generateDigestSummary(
   total: number,
   hot: number,
@@ -110,13 +112,18 @@ export async function generateDigestSummary(
 ): Promise<string> {
   const res = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 150,
+    max_tokens: 120,
+    system: [
+      {
+        type: 'text',
+        text: DIGEST_SYSTEM,
+        cache_control: { type: 'ephemeral' },
+      } as Anthropic.TextBlockParam & { cache_control: { type: string } },
+    ],
     messages: [
       {
         role: 'user',
-        content: `Write a 2-sentence morning email digest for a ${businessType} business.
-Stats: ${total} new leads, ${hot} hot (score 7+), ${cold} cold (score <4).
-Tone: professional, motivating. No emojis. Plain text only.`,
+        content: `${businessType} business digest. ${total} new leads today — ${hot} hot (score 7+), ${cold} cold (score <4). Write the 2-sentence summary.`,
       },
     ],
   })
