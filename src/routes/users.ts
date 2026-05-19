@@ -7,6 +7,7 @@ import {
 	removeMember,
 	revokeInvitation,
 	updateMember,
+	verifyInvitation,
 } from '../controllers/usersController'
 import { verifyToken } from '../middlewares/auth'
 import requirePermission from '../middlewares/requirePermission'
@@ -14,6 +15,7 @@ import requirePermission from '../middlewares/requirePermission'
 const router: Router = Router()
 
 // Public
+router.get('/invitations/verify', verifyInvitation)
 router.post('/accept-invite', acceptInvite)
 
 // Protected — require users:* permissions

@@ -302,6 +302,53 @@ export const revokeInvitation = async (
 	}
 }
 
+// GET /api/users/invitations/verify?token= (public)
+export const verifyInvitation = async (
+	req: Request,
+	res: Response,
+	next: NextFunction,
+): Promise<void> => {
+	try {
+		const { token } = req.query as { token?: string }
+
+		if (!token) {
+			res.status(400).json({ success: false, message: 'token is required' })
+			return
+		}
+
+		const invitation = await Invitation.findOne({ token })
+			.populate<{ invitedBy: { name: string } }>('invitedBy', 'name')
+			.lean()
+
+		if (!invitation) {
+			res.status(404).json({ success: false, message: 'Invitation not found' })
+			return
+		}
+
+		if (invitation.status !== 'pending' || invitation.expiresAt < new Date()) {
+			res.status(410).json({
+				success: false,
+				message: 'This invitation has expired or already been used.',
+			})
+			return
+		}
+
+		const org = await Organization.findById(invitation.organizationId).lean()
+
+		res.json({
+			success: true,
+			data: {
+				email: invitation.email,
+				role: invitation.role,
+				organizationName: org?.name ?? 'Unknown Organization',
+				inviterName: (invitation.invitedBy as { name: string } | null)?.name ?? 'A team member',
+			},
+		})
+	} catch (error) {
+		next(error)
+	}
+}
+
 // POST /api/users/accept-invite (public)
 export const acceptInvite = async (
 	req: Request,
@@ -406,5 +453,6 @@ export default {
 	removeMember,
 	listInvitations,
 	revokeInvitation,
+	verifyInvitation,
 	acceptInvite,
 }
