@@ -1,6 +1,7 @@
 import { OAuth2Client } from 'google-auth-library'
 import jwt from 'jsonwebtoken'
 import { config } from '../config'
+import { Organization } from '../models/Organization'
 import { Settings } from '../models/Settings'
 import { IUser, User } from '../models/User'
 import logger from '../utils/logger'
@@ -78,9 +79,17 @@ export const handleCallback = async (code: string): Promise<AuthResult> => {
 				email,
 				name: name || email.split('@')[0],
 				avatar: picture,
-				role: 'user',
+				role: 'root',
 			})
 			isNewUser = true
+
+			// Create organization for new root user
+			const org = await Organization.create({
+				name: 'My Business',
+				ownerId: user._id,
+			})
+			user.organizationId = org._id as any
+			await user.save()
 
 			// Create default settings for new user
 			await Settings.create({ userId: user._id })

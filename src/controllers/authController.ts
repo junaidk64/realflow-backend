@@ -136,7 +136,19 @@ export const getProfile = async (
 		res.json({
 			success: true,
 			data: {
-				user,
+				user: {
+					_id: user._id,
+					name: user.name,
+					email: user.email,
+					avatar: user.avatar,
+					role: user.role,
+					permissions: user.permissions ?? [],
+					organizationId: user.organizationId,
+					isActive: user.isActive,
+					lastLogin: user.lastLogin,
+					createdAt: user.createdAt,
+					updatedAt: user.updatedAt,
+				},
 				gmailConnected: !!gmailConnection?.isActive,
 				gmailEmail: gmailConnection?.email,
 			},

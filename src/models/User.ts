@@ -1,13 +1,18 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
 export type UserPlan = 'free' | 'basic' | 'pro'
+export type UserRole = 'root' | 'admin' | 'manager' | 'member'
 
 export interface IUser extends Document {
 	name: string
 	email: string
 	googleId: string
 	avatar?: string
-	role: 'admin' | 'user'
+	role: UserRole
+	permissions: string[]
+	organizationId: mongoose.Types.ObjectId | null
+	invitedBy: mongoose.Types.ObjectId | null
+	password?: string
 	isActive: boolean
 	lastLogin?: Date
 	plan: UserPlan
@@ -34,8 +39,9 @@ const UserSchema = new Schema<IUser>(
 		},
 		googleId: {
 			type: String,
-			required: true,
 			unique: true,
+			sparse: true,
+			default: null,
 		},
 		avatar: {
 			type: String,
@@ -43,8 +49,26 @@ const UserSchema = new Schema<IUser>(
 		},
 		role: {
 			type: String,
-			enum: ['admin', 'user'],
-			default: 'user',
+			enum: ['root', 'admin', 'manager', 'member'],
+			default: 'member',
+		},
+		permissions: {
+			type: [String],
+			default: [],
+		},
+		organizationId: {
+			type: Schema.Types.ObjectId,
+			ref: 'Organization',
+			default: null,
+		},
+		invitedBy: {
+			type: Schema.Types.ObjectId,
+			ref: 'User',
+			default: null,
+		},
+		password: {
+			type: String,
+			default: null,
 		},
 		isActive: {
 			type: Boolean,
@@ -72,7 +96,7 @@ const UserSchema = new Schema<IUser>(
 		timestamps: true,
 		toJSON: {
 			transform: (_doc, ret) => {
-				// delete ret.__v;
+				delete ret.password
 				return ret
 			},
 		},

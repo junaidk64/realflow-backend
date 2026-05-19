@@ -1,350 +1,369 @@
-# RealFlow — Backend Integration Guide
-**Purpose:** What the backend must confirm, fix, or add to support the current frontend. Organised by priority.
+# User Management — Full Backend Spec
+
+This section covers the multi-user / team management feature added to the frontend. The frontend pages are at `/users`; they are visible only to users with `role: 'root'` or `role: 'admin'`.
 
 ---
 
-## Quick Reference: New/Changed API Contracts
+## New Schemas
 
-| Endpoint | Change | Priority |
-|----------|--------|----------|
-| `PATCH /api/settings` | Must accept `autoReplySubject`, `autoReplyTemplate` | Critical |
-| `GET /api/settings` response | Must return `autoReplySubject`, `autoReplyTemplate`, `emailSignature` | Critical |
-| `POST /api/settings/test-template` | Must use business-type sample data | High |
-| `POST /api/email/send` | Must set `From` header to `"businessName" <email>` | High |
-| `GET /api/leads` | `aiScore`, `sentiment`, `extraFields`, `businessType` in response | High |
-| `GET /api/leads?sortBy=aiScore` | Must support aiScore as sort field | Medium |
-| `PATCH /api/workflows/:id` | Already exists — confirm `isActive` patch works | Medium |
+### Organization
 
----
-
-## 1. Settings Model — Confirm These Fields Exist
-
-The frontend now sends and reads these fields. Confirm they are in the Settings Mongoose schema:
-
-```typescript
-// Confirm your Settings schema includes ALL of these:
+```js
+// models/Organization.js
 {
-  businessType:       { type: String, enum: ['moving','real_estate','insurance','cleaning','legal','general'], default: 'general' },
-  businessName:       { type: String, default: '' },
-  autoReply:          { type: Boolean, default: true },
-  autoReplySubject:   { type: String, default: '' },   // ← confirm this exists
-  autoReplyTemplate:  { type: String, default: '' },   // ← confirm this exists
-  emailSignature:     { type: String, default: '', maxlength: 500 }, // ← confirm + add maxlength
-  n8nWebhookUrl:      { type: String, default: '' },
-  minimumConfidence:  { type: Number, default: 40, min: 0, max: 100 },
-  notifications: {
-    newLead:          { type: Boolean, default: true },
-    autoReplySent:    { type: Boolean, default: true },
-    workflowTriggered:{ type: Boolean, default: false },
-    dailySummary:     { type: Boolean, default: true },
-    emailAddress:     { type: String, default: '' },
-  },
+  _id: ObjectId,
+  name: String,           // business name, copied from Settings.businessName
+  ownerId: ObjectId,      // ref: User — the root user
+  createdAt: Date,
+  updatedAt: Date,
 }
 ```
 
-**If `autoReplySubject` or `autoReplyTemplate` are missing from the schema**, the PATCH will silently drop them and the user's saved subject/template will be lost.
+### User (extended)
+
+Add these fields to the existing User schema:
+
+```js
+// Add to existing User schema:
+role:           { type: String, enum: ['root','admin','manager','member'], default: 'member' },
+permissions:    [{ type: String }],    // empty = use role defaults
+organizationId: { type: ObjectId, ref: 'Organization' },
+invitedBy:      { type: ObjectId, ref: 'User', default: null },
+```
+
+**Migration note:** Existing users (Google OAuth) should get `role: 'root'` and have a new Organization document created for them. Run this once:
+
+```js
+// One-time migration script
+const users = await User.find({ organizationId: null });
+for (const user of users) {
+  const org = await Organization.create({ name: 'My Business', ownerId: user._id });
+  await User.findByIdAndUpdate(user._id, { organizationId: org._id, role: 'root' });
+}
+```
+
+### Invitation
+
+```js
+// models/Invitation.js
+{
+  _id: ObjectId,
+  email:          { type: String, required: true },
+  role:           { type: String, enum: ['admin','manager','member'], required: true },
+  permissions:    [{ type: String }],   // optional override; empty = use role defaults
+  organizationId: { type: ObjectId, ref: 'Organization', required: true },
+  invitedBy:      { type: ObjectId, ref: 'User', required: true },
+  token:          { type: String, unique: true },   // UUID v4
+  status:         { type: String, enum: ['pending','accepted','expired','revoked'], default: 'pending' },
+  expiresAt:      { type: Date },    // now + 7 days
+  createdAt:      Date,
+  updatedAt:      Date,
+}
+```
+
+**Indexes:**
+- `{ token: 1 }` — unique
+- `{ email: 1, organizationId: 1 }`
+- `{ expiresAt: 1, expireAfterSeconds: 0 }` — TTL (optional, or handle via cron)
 
 ---
 
-## 2. `PATCH /api/settings` — Accept All Fields
+## RBAC — Role Hierarchy & Default Permissions
 
-The frontend `PATCH /api/settings` now sends this full payload:
+### Role Hierarchy
+
+| Role | Level | Who |
+|------|-------|-----|
+| `root` | 4 | Business owner — first Google sign-in. Cannot be deleted or have role changed. |
+| `admin` | 3 | Can manage team members, all features except org-wide settings. |
+| `manager` | 2 | Can work leads, workflows, templates. Cannot manage users. |
+| `member` | 1 | View-only access to leads, templates, logs. |
+
+### Default Permissions per Role
+
+| Permission | root | admin | manager | member |
+|-----------|:----:|:-----:|:-------:|:------:|
+| `users:view` | ✅ | ✅ | | |
+| `users:invite` | ✅ | ✅ | | |
+| `users:edit` | ✅ | ✅ | | |
+| `users:delete` | ✅ | ✅ | | |
+| `leads:view` | ✅ | ✅ | ✅ | ✅ |
+| `leads:create` | ✅ | ✅ | ✅ | |
+| `leads:edit` | ✅ | ✅ | ✅ | |
+| `leads:delete` | ✅ | ✅ | | |
+| `workflows:view` | ✅ | ✅ | ✅ | |
+| `workflows:manage` | ✅ | ✅ | | |
+| `templates:view` | ✅ | ✅ | ✅ | ✅ |
+| `templates:manage` | ✅ | ✅ | | |
+| `settings:view` | ✅ | ✅ | ✅ | |
+| `settings:manage` | ✅ | | | |
+| `logs:view` | ✅ | ✅ | ✅ | ✅ |
+
+### Backend Middleware
+
+```js
+// middleware/requirePermission.js
+const ROLE_DEFAULT_PERMISSIONS = {
+  root:    ['users:view','users:invite','users:edit','users:delete','leads:view','leads:create','leads:edit','leads:delete','workflows:view','workflows:manage','templates:view','templates:manage','settings:view','settings:manage','logs:view'],
+  admin:   ['users:view','users:invite','users:edit','users:delete','leads:view','leads:create','leads:edit','leads:delete','workflows:view','workflows:manage','templates:view','templates:manage','settings:view','logs:view'],
+  manager: ['leads:view','leads:create','leads:edit','workflows:view','templates:view','settings:view','logs:view'],
+  member:  ['leads:view','templates:view','logs:view'],
+};
+
+function requirePermission(permission) {
+  return (req, res, next) => {
+    const user = req.user;
+    const effective = user.permissions?.length
+      ? user.permissions
+      : (ROLE_DEFAULT_PERMISSIONS[user.role] || []);
+    if (!effective.includes(permission)) {
+      return res.status(403).json({ success: false, message: 'Forbidden', code: 'FORBIDDEN' });
+    }
+    next();
+  };
+}
+
+// Usage:
+router.get('/leads', requirePermission('leads:view'), leadsController.list);
+router.delete('/leads/:id', requirePermission('leads:delete'), leadsController.delete);
+```
+
+**Important:** Add `organizationId` to all data queries to enforce tenant isolation:
+
+```js
+// Every data query must scope to the user's org:
+const leads = await Lead.find({ organizationId: req.user.organizationId, ...filters });
+```
+
+---
+
+## New API Endpoints
+
+### `GET /api/users`
+
+Returns all team members in the caller's organization.
+
+**Auth:** admin+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "members": [
+      {
+        "_id": "...",
+        "name": "Jane Doe",
+        "email": "jane@company.com",
+        "avatar": "https://...",
+        "role": "manager",
+        "permissions": [],
+        "isActive": true,
+        "lastLogin": "2026-05-18T10:00:00Z",
+        "invitedBy": "...",
+        "createdAt": "2026-04-01T00:00:00Z",
+        "updatedAt": "2026-05-18T10:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `POST /api/users/invite`
+
+Sends an invitation email to a new team member.
+
+**Auth:** admin+
+**Body:**
+```json
+{
+  "email": "newmember@company.com",
+  "role": "manager",
+  "permissions": []
+}
+```
+
+**Backend actions:**
+1. Check no existing user/invitation with that email in org.
+2. Create `Invitation` document with `token: uuidv4()`, `expiresAt: now + 7 days`.
+3. Send email:
+   - **Subject:** `You've been invited to join {businessName} on LeadFlow Pro`
+   - **Body:** Include link `{FRONTEND_URL}/accept-invite?token={token}`
+4. Return invitation.
+
+**Error cases:**
+- `409` if email already a member of the org.
+- `409` if a pending invitation already exists for that email.
+
+---
+
+### `PATCH /api/users/:id`
+
+Update a team member's role, permissions, or active status.
+
+**Auth:** admin+
+**Body (all optional):**
+```json
+{
+  "role": "admin",
+  "permissions": ["leads:view", "leads:edit"],
+  "isActive": false
+}
+```
+
+**Constraints:**
+- Cannot change role of `root` user.
+- Actor cannot set target role >= actor's own role (e.g. a `manager` cannot set someone to `admin`).
+- `permissions: []` means reset to role defaults (the frontend sends `undefined` to skip permissions update, or the array to override).
+
+---
+
+### `DELETE /api/users/:id`
+
+Remove a team member from the organization.
+
+**Auth:** admin+
+**Constraints:** Cannot remove `root` user. Cannot remove self.
+**Action:** Hard-delete user record OR set `isActive: false` + `organizationId: null`. Hard-delete is cleaner; soft-delete keeps login history.
+
+---
+
+### `GET /api/users/invitations`
+
+List all invitations for the caller's organization.
+
+**Auth:** admin+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "invitations": [
+      {
+        "_id": "...",
+        "email": "pending@company.com",
+        "role": "member",
+        "permissions": [],
+        "status": "pending",
+        "invitedBy": "...",
+        "expiresAt": "2026-05-26T00:00:00Z",
+        "createdAt": "2026-05-19T00:00:00Z",
+        "updatedAt": "2026-05-19T00:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `DELETE /api/users/invitations/:id`
+
+Revoke a pending invitation.
+
+**Auth:** admin+
+**Action:** Set `invitation.status = 'revoked'` (do not hard-delete so we have a record).
+
+---
+
+### `POST /api/users/accept-invite`
+
+Accept an invitation (called from the `/accept-invite?token=...` page on the frontend).
+
+**Auth:** None (public endpoint)
+**Body:**
+```json
+{
+  "token": "<UUID from email>",
+  "name": "New User Name",
+  "password": "optional-if-setting-password"
+}
+```
+
+**Backend actions:**
+1. Find invitation by token; verify `status === 'pending'` and `expiresAt > now`.
+2. Check if a user with that email already exists:
+   - **Exists:** Link to organization (`user.organizationId = invitation.organizationId`), update role/permissions.
+   - **Doesn't exist:** Create new User with `name`, hashed `password` (if provided), `role`, `permissions`, `organizationId`, `invitedBy`.
+3. Set `invitation.status = 'accepted'`.
+4. Issue JWT access + refresh tokens and return them.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "accessToken": "...",
+    "refreshToken": "...",
+    "user": { "_id": "...", "name": "...", "email": "...", "role": "manager", ... }
+  }
+}
+```
+
+---
+
+## Invitation Flow Diagram
+
+```
+Admin                   Backend                      Invitee Email
+  │                        │                            │
+  ├─ POST /users/invite ──►│                            │
+  │                        ├─ Create Invitation doc     │
+  │                        ├─ Send email ──────────────►│
+  │◄─ 200 (invitation) ────│                            │
+  │                        │                            │
+  │                        │           ◄── Click link ──┤
+  │                        │◄── POST /users/accept-invite { token }
+  │                        ├─ Verify token valid        │
+  │                        ├─ Create/link User          │
+  │                        ├─ invitation.status = 'accepted'
+  │                        ├─ Issue JWT ───────────────►│ (frontend stores tokens, redirect to /dashboard)
+```
+
+---
+
+## `GET /auth/profile` — Update Response
+
+The frontend reads `role`, `permissions`, and `organizationId` from the profile response. Ensure `GET /api/auth/profile` returns:
 
 ```json
 {
-  "businessType": "insurance",
-  "businessName": "Smith Insurance Ltd",
-  "autoReply": true,
-  "autoReplySubject": "Re: Your insurance quote request",
-  "autoReplyTemplate": "Hello {{customerName}},\n\nThank you for contacting {{businessName}}...\n\n{{emailSignature}}",
-  "emailSignature": "Best regards,\nJohn Smith\nSmith Insurance Ltd\n+44 7700 900000",
-  "n8nWebhookUrl": "",
-  "minimumConfidence": 40,
-  "notifications": {
-    "newLead": true,
-    "autoReplySent": true,
-    "workflowTriggered": false,
-    "dailySummary": true,
-    "emailAddress": "alerts@smithinsurance.co.uk"
+  "success": true,
+  "data": {
+    "user": {
+      "_id": "...",
+      "name": "...",
+      "email": "...",
+      "avatar": "...",
+      "role": "root",
+      "permissions": [],
+      "organizationId": "...",
+      "isActive": true,
+      "lastLogin": "...",
+      "createdAt": "...",
+      "updatedAt": "..."
+    }
   }
 }
 ```
 
-Ensure the controller uses a whitelist (not `Object.assign(settings, req.body)`) — only update allowed fields.
-
 ---
 
-## 3. Auto-Reply Rendering — Wire `emailSignature` and `autoReplySubject`
+## User Management Checklist
 
-**Current issue (from audit):** `emailSignature` is stored in Settings but likely NOT injected into the auto-reply template when it renders. Users set a signature but it never appears in emails.
-
-**Fix in `settingsService.ts` / `queueService.ts` / wherever template rendering happens:**
-
-```typescript
-// When building the variables object for template rendering:
-const variables = {
-  customerName:   lead.customerName     || 'there',
-  customerEmail:  lead.customerEmail    || '',
-  customerPhone:  lead.customerPhone    || '',
-  businessName:   settings.businessName || 'Our Team',
-  emailSignature: settings.emailSignature
-    ? settings.emailSignature.replace(/\n/g, '<br>') // preserve line breaks in HTML
-    : '',
-  // business-type specific fields
-  ...(lead.businessType === 'moving' ? {
-    fromAddress: lead.fromAddress || '',
-    toAddress:   lead.toAddress   || '',
-    movingDate:  lead.movingDate  || '',
-    services:    lead.services?.join(', ') || '',
-  } : {}),
-  // any extraFields from AI extraction
-  ...(lead.extraFields || {}),
-};
-
-// Subject line:
-const subject = settings.autoReplySubject
-  || defaultSubjectForBusinessType(settings.businessType)
-  || 'Thank you for your enquiry';
-
-const renderedSubject = subject.replace(/\{\{businessName\}\}/g, settings.businessName);
-```
-
----
-
-## 4. Email From Header — Set Business Name
-
-**Current issue:** Emails likely send as `From: user@gmail.com`. This looks impersonal and reduces open rates.
-
-**Fix in your email service (`emailService.ts`):**
-
-```typescript
-// When calling Gmail API or Nodemailer:
-const fromHeader = settings.businessName
-  ? `"${settings.businessName}" <${senderEmail}>`
-  : senderEmail;
-
-// Gmail API (via googleapis):
-await gmail.users.messages.send({
-  userId: 'me',
-  requestBody: {
-    raw: createMimeMessage({
-      from: fromHeader,   // ← set this
-      to: lead.customerEmail,
-      subject: renderedSubject,
-      html: renderedHtml,
-    }),
-  },
-});
-
-// Or Nodemailer:
-await transporter.sendMail({
-  from: fromHeader,    // ← set this
-  to: lead.customerEmail,
-  subject: renderedSubject,
-  html: renderedHtml,
-});
-```
-
-This is a 5-minute fix that improves open rates significantly.
-
----
-
-## 5. Fix `POST /api/settings/test-template` — Business-Type Sample Data
-
-**Current issue (line 48 of settingsController.ts):** The test preview always uses moving sample data even when the user's business type is `insurance`, `legal`, etc.
-
-```typescript
-// CURRENT (wrong for non-moving businesses):
-const sampleLead = {
-  customerName: 'John Smith',
-  movingDate: '15th June 2025',
-  fromAddress: '123 High Street, London',
-  toAddress: '456 New Road, Manchester',
-  services: ['Full Packing', 'Storage'],
-};
-
-// FIX — use business-type-specific sample data:
-const SAMPLE_LEADS: Record<string, object> = {
-  moving: {
-    customerName: 'John Smith', fromAddress: '123 High St, London',
-    toAddress: '456 Oak Ave, Manchester', movingDate: '15 June 2026',
-    services: ['Full Packing', 'Storage'],
-  },
-  real_estate: {
-    customerName: 'Sarah Johnson', propertyAddress: '14 Oak Lane, Bristol',
-    budget: '£350,000–£400,000', viewingDate: 'Saturday 22 June', bedrooms: '3',
-  },
-  insurance: {
-    customerName: 'Mike Davies', policyType: 'Car Insurance',
-    coverageAmount: '£30,000', renewalDate: 'August 2026', currentProvider: 'Admiral',
-  },
-  cleaning: {
-    customerName: 'Emma Wilson', serviceDate: '25 June 2026',
-    propertyType: 'End of tenancy', rooms: '4', frequency: 'One-off',
-  },
-  legal: {
-    customerName: 'Robert Chen', caseType: 'Conveyancing',
-    urgency: 'Medium', consultationDate: 'Next week',
-  },
-  general: {
-    customerName: 'Alex Turner', serviceRequired: 'General enquiry',
-    preferredDate: 'This week', budget: '£500',
-  },
-};
-
-// In the controller:
-const settings = await Settings.findOne({ userId: req.user._id });
-const sampleLead = SAMPLE_LEADS[settings.businessType] || SAMPLE_LEADS.general;
-const variables = {
-  ...sampleLead,
-  businessName:   settings.businessName   || 'Your Business',
-  emailSignature: settings.emailSignature || 'Best regards,\nYour Team',
-};
-```
-
----
-
-## 6. Lead API Response — Confirm These Fields Are Returned
-
-The frontend lead table and detail page now display `aiScore`, `sentiment`, `extraFields`, `businessType`. Confirm the `GET /api/leads` and `GET /api/leads/:id` responses include them.
-
-**If they're not being returned**, add them to the lean/select projection:
-
-```typescript
-// In leadsController.ts — GET /api/leads:
-const leads = await Lead.find(query)
-  .select('customerName customerEmail customerPhone fromAddress toAddress movingDate services status autoReplySent autoReplySentAt n8nTriggered confidence rawEmailSubject rawEmailFrom source businessType extraFields aiScore aiScoreReason sentiment aiProcessed emailLogId createdAt updatedAt')
-  .sort({ [sortBy]: sortOrder === 'desc' ? -1 : 1 })
-  .skip(skip)
-  .limit(limit)
-  .lean();
-```
-
-**Important:** `aiScore` sorting — confirm `sortBy=aiScore` is handled in the query builder. If it falls through to a default, leads won't sort correctly when the user selects "AI Score" in the table toolbar.
-
----
-
-## 7. Workflow `isActive` PATCH — Confirm It Works
-
-The workflows page now calls:
-```
-PATCH /api/workflows/:id  { "isActive": false }
-```
-
-This is used to deactivate stale `auto_reply` workflows. Confirm the workflow controller accepts `isActive` as a patchable field (not just `config`, `name`, `webhookUrl`).
-
-If the route only patches `config`, add:
-```typescript
-const allowed = ['name', 'description', 'webhookUrl', 'isActive', 'config'];
-const update = _.pick(req.body, allowed);
-await Workflow.findByIdAndUpdate(workflowId, update);
-```
-
----
-
-## 8. Gmail Watch Renewal — Move to Backend Cron (SAFETY CRITICAL)
-
-**Current situation:** Gmail watch renewal runs as an n8n cron every 6 days. If n8n is down on renewal day, Gmail push notifications stop working for ALL users — they stop receiving leads silently.
-
-**Fix:** Add a backend cron (see `N8N_MIGRATION_GUIDE.md` for full code).
-
-```typescript
-// Run daily at 6 AM UTC
-cron.schedule('0 6 * * *', async () => {
-  const twoDaysFromNow = new Date(Date.now() + 48 * 60 * 60 * 1000);
-  const expiring = await GmailConnection.find({
-    watchExpiry: { $lt: twoDaysFromNow },
-    isActive: true,
-  });
-  for (const conn of expiring) {
-    try {
-      await gmailService.renewWatch(conn.userId.toString());
-    } catch {
-      // notify the user, not just the admin
-      await notificationService.create({
-        userId: conn.userId,
-        type: 'new_lead', // or add 'system_alert' type
-        title: 'Gmail connection needs renewal',
-        message: 'Your Gmail watch expired. Please reconnect Gmail to keep receiving leads.',
-      });
-    }
-  }
-});
-```
-
-Deactivate `6-gmail-watch-renewal.json` in n8n after this is live.
-
----
-
-## 9. `emailLogId` on Lead — Populate Email Provider Info
-
-The lead detail page shows whether auto-reply was sent via Gmail or SMTP. It detects this by checking if the outgoing `EmailLog` has a `gmailMessageId` set.
-
-**Confirm:** When auto-reply is sent via SMTP (not Gmail API), `EmailLog.gmailMessageId` should be empty/null. When sent via Gmail API, it should be the Gmail message ID string.
-
-This lets the frontend display:
-- `via Gmail` — when `gmailMessageId` is set
-- `via SMTP` — when `gmailMessageId` is empty
-
-No backend change needed if this is already the case. Just verify the `emailLogId` is populated on Lead documents after auto-reply sends.
-
----
-
-## 10. Template Rendering — Remove Approval Gate for Basic Tier
-
-**Current issue:** Templates require `status: "approved"` before they can be used in auto-reply. But there's no admin panel to approve them, so templates are stuck in `"pending"` forever.
-
-**Quick fix options:**
-
-**Option A (recommended for now):** Allow users to use their own templates regardless of status — approval only matters for a public template marketplace that doesn't exist yet.
-
-```typescript
-// In template render endpoint or auto-reply resolution:
-// Instead of: template.status === 'approved'
-// Use:
-const canRender = template.status === 'approved' || template.userId.toString() === userId;
-```
-
-**Option B:** Auto-approve templates created by the template owner:
-```typescript
-// In template creation:
-const template = await Template.create({
-  ...templateData,
-  userId: req.user._id,
-  status: 'approved', // auto-approve user's own templates
-});
-```
-
----
-
-## 11. Duplicate `autoReplyTemplate` Field — Clarify
-
-The Settings model appears to have `autoReplyTemplate` (a plain text/HTML string) AND the Workflow/Template system with full template documents. These serve different purposes:
-
-| Field | Purpose | Used When |
-|-------|---------|-----------|
-| `Settings.autoReplyTemplate` | Simple fallback message | No workflow template assigned |
-| `Template` document | Full HTML template with variables | Assigned to auto_reply workflow |
-
-**Confirm the priority order in your auto-reply resolver:**
-1. Workflow has `config.templateId` → use that Template document
-2. Workflow has no template → use `Settings.autoReplyTemplate` as body
-3. `Settings.autoReplyTemplate` is empty → use business-type default template
-
-Document this in a comment in your `queueService.ts` so it's clear to future you.
-
----
-
-## Summary Checklist
-
-- [ ] `autoReplySubject` in Settings schema
-- [ ] `autoReplyTemplate` in Settings schema (confirm it exists, may already be there)
-- [ ] `emailSignature` injected into template rendering variables
-- [ ] `autoReplySubject` used as email subject (not hardcoded)
-- [ ] Email `From` header set to `"businessName" <email>`
-- [ ] `test-template` endpoint uses business-type sample data
-- [ ] `GET /api/leads` returns `aiScore`, `sentiment`, `extraFields`, `businessType`
-- [ ] `sortBy=aiScore` supported in leads query
-- [ ] `PATCH /api/workflows/:id` accepts `isActive`
-- [ ] Gmail watch renewal moved to backend cron
-- [ ] Template approval gate removed for user's own templates
+- [ ] Add `role`, `permissions`, `organizationId`, `invitedBy` fields to User schema
+- [ ] Create Organization schema and model
+- [ ] Create Invitation schema and model
+- [ ] Run one-time migration: assign `role: 'root'` and create Org for existing users
+- [ ] `GET /api/users` — list org members
+- [ ] `POST /api/users/invite` — create invitation + send email
+- [ ] `PATCH /api/users/:id` — update role/permissions/isActive
+- [ ] `DELETE /api/users/:id` — remove member
+- [ ] `GET /api/users/invitations` — list invitations
+- [ ] `DELETE /api/users/invitations/:id` — revoke invitation
+- [ ] `POST /api/users/accept-invite` — accept token, issue JWT
+- [ ] `requirePermission` middleware applied to all routes
+- [ ] All data queries scoped by `organizationId`
+- [ ] `GET /auth/profile` returns `role`, `permissions`, `organizationId`
+- [ ] Frontend `/accept-invite` page built (not yet in this guide — add route `src/app/accept-invite/page.tsx`)

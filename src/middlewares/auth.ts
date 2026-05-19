@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 import { config } from '../config';
 import { User } from '../models/User';
 import logger from '../utils/logger';
@@ -8,6 +9,7 @@ export interface JwtPayload {
   userId: string;
   email: string;
   role: string;
+  organizationId?: string;
 }
 
 declare global {
@@ -17,6 +19,8 @@ declare global {
         userId: string;
         email: string;
         role: string;
+        organizationId?: mongoose.Types.ObjectId | null;
+        permissions: string[];
       };
     }
   }
@@ -53,7 +57,9 @@ export const verifyToken = async (
     req.user = {
       userId: decoded.userId,
       email: decoded.email,
-      role: decoded.role,
+      role: user.role,
+      organizationId: user.organizationId,
+      permissions: user.permissions ?? [],
     };
 
     next();
@@ -96,7 +102,16 @@ export const optionalAuth = async (
 
     const token = authHeader.substring(7);
     const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
-    req.user = decoded;
+    const user = await User.findById(decoded.userId).select('role permissions organizationId isActive');
+    if (user && user.isActive) {
+      req.user = {
+        userId: decoded.userId,
+        email: decoded.email,
+        role: user.role,
+        organizationId: user.organizationId,
+        permissions: user.permissions ?? [],
+      };
+    }
   } catch {
     // Token invalid, continue without user
   }

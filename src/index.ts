@@ -19,6 +19,7 @@ import emailRoutes from './routes/email'
 import gmailRoutes from './routes/gmail'
 import leadRoutes from './routes/leads'
 import notificationRoutes from './routes/notifications'
+import userRoutes from './routes/users'
 import settingsRoutes from './routes/settings'
 import smtpRoutes from './routes/smtp'
 import templateRoutes from './routes/templates'
@@ -116,6 +117,7 @@ app.use('/api/admin', adminRoutes)
 app.use('/api/workflows', workflowRoutes)
 app.use('/api/webhooks', webhookRoutes)
 app.use('/api/notifications', notificationRoutes)
+app.use('/api/users', userRoutes)
 app.post('/api/recieved', (req, res) => {
 	logger.info('Received email data:', req.body)
 	res.json({ success: true })
