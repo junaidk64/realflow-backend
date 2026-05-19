@@ -1,5 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
+export type UserPlan = 'free' | 'basic' | 'pro'
+
 export interface IUser extends Document {
 	name: string
 	email: string
@@ -8,6 +10,9 @@ export interface IUser extends Document {
 	role: 'admin' | 'user'
 	isActive: boolean
 	lastLogin?: Date
+	plan: UserPlan
+	stripeCustomerId: string | null
+	stripeSubscriptionId: string | null
 	createdAt: Date
 	updatedAt: Date
 }
@@ -47,6 +52,19 @@ const UserSchema = new Schema<IUser>(
 		},
 		lastLogin: {
 			type: Date,
+			default: null,
+		},
+		plan: {
+			type: String,
+			enum: ['free', 'basic', 'pro'],
+			default: 'free',
+		},
+		stripeCustomerId: {
+			type: String,
+			default: null,
+		},
+		stripeSubscriptionId: {
+			type: String,
 			default: null,
 		},
 	},

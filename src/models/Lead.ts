@@ -2,6 +2,8 @@ import mongoose, { Document, Schema } from 'mongoose'
 
 export type LeadStatus = 'new' | 'contacted' | 'quoted' | 'won' | 'lost'
 export type LeadSource = 'email' | 'manual' | 'webhook'
+export type BusinessType = 'moving' | 'real_estate' | 'insurance' | 'cleaning' | 'legal' | 'general'
+export type LeadSentiment = 'positive' | 'neutral' | 'negative' | 'urgent'
 
 export interface ILead extends Document {
 	userId: mongoose.Types.ObjectId
@@ -24,6 +26,16 @@ export interface ILead extends Document {
 	confidence: number
 	rawEmailSubject: string
 	rawEmailFrom: string
+	// AI fields
+	businessType: BusinessType
+	extraFields: Map<string, unknown>
+	aiScore: number | null
+	aiScoreReason: string | null
+	sentiment: LeadSentiment | null
+	aiProcessed: boolean
+	// Deduplication
+	fingerprint: string | null
+	duplicateEmailIds: string[]
 	createdAt: Date
 	updatedAt: Date
 }
@@ -120,6 +132,44 @@ const LeadSchema = new Schema<ILead>(
 			type: String,
 			default: '',
 		},
+		businessType: {
+			type: String,
+			enum: ['moving', 'real_estate', 'insurance', 'cleaning', 'legal', 'general'],
+			default: 'general',
+		},
+		extraFields: {
+			type: Map,
+			of: Schema.Types.Mixed,
+			default: {},
+		},
+		aiScore: {
+			type: Number,
+			min: 1,
+			max: 10,
+			default: null,
+		},
+		aiScoreReason: {
+			type: String,
+			maxlength: 200,
+			default: null,
+		},
+		sentiment: {
+			type: String,
+			enum: ['positive', 'neutral', 'negative', 'urgent'],
+			default: null,
+		},
+		aiProcessed: {
+			type: Boolean,
+			default: false,
+		},
+		fingerprint: {
+			type: String,
+			default: null,
+		},
+		duplicateEmailIds: {
+			type: [String],
+			default: [],
+		},
 	},
 	{
 		timestamps: true,
@@ -136,6 +186,7 @@ LeadSchema.index({ userId: 1, createdAt: -1 })
 LeadSchema.index({ userId: 1, status: 1 })
 LeadSchema.index({ userId: 1, customerEmail: 1 })
 LeadSchema.index({ rawEmailId: 1 })
+LeadSchema.index({ userId: 1, fingerprint: 1 })
 
 export const Lead = mongoose.model<ILead>('Lead', LeadSchema)
 export default Lead

@@ -12,18 +12,21 @@ import logger from './utils/logger'
 
 // Routes
 import authRoutes from './routes/auth'
+// import billingRoutes from './routes/billing'
+import adminRoutes from './routes/admin'
+import adminTemplateRoutes from './routes/adminTemplates'
 import emailRoutes from './routes/email'
 import gmailRoutes from './routes/gmail'
 import leadRoutes from './routes/leads'
+import notificationRoutes from './routes/notifications'
 import settingsRoutes from './routes/settings'
 import smtpRoutes from './routes/smtp'
 import templateRoutes from './routes/templates'
-import adminTemplateRoutes from './routes/adminTemplates'
 import webhookRoutes from './routes/webhooks'
 import workflowRoutes from './routes/workflows'
-import notificationRoutes from './routes/notifications'
 
 // Jobs
+import { startDailyDigestJob } from './crons/dailyDigest'
 import { startGmailSyncJob } from './jobs/gmailSyncJob'
 import { startGmailWatchRenewalJob } from './jobs/gmailWatchRenewalJob'
 
@@ -45,6 +48,7 @@ app.use(
 				config.frontendUrl,
 				'http://localhost:3000',
 				'http://localhost:3001',
+				'https://realflow-frontend-zeta.vercel.app',
 			]
 			if (!origin || allowedOrigins.includes(origin)) {
 				callback(null, true)
@@ -65,18 +69,42 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 // Global rate limiter
 app.use(globalLimiter)
 
-// Health check
-app.get('/health', (_req, res) => {
-	res.json({
-		status: 'ok',
+// Health check — probes MongoDB, Redis, and Anthropic API
+app.get('/health', async (_req, res) => {
+	const mongoose = await import('mongoose')
+	const { Redis } = await import('ioredis')
+
+	const mongoOk = mongoose.default.connection.readyState === 1
+
+	let redisOk = false
+	try {
+		const redis = new Redis(config.redis.url, {
+			lazyConnect: true,
+			connectTimeout: 2000,
+		})
+		await redis.connect()
+		await redis.ping()
+		await redis.quit()
+		redisOk = true
+	} catch {
+		/* */
+	}
+
+	res.status(mongoOk && redisOk ? 200 : 503).json({
+		status: mongoOk && redisOk ? 'ok' : 'degraded',
 		timestamp: new Date().toISOString(),
 		uptime: process.uptime(),
 		version: '1.0.0',
+		services: {
+			mongo: mongoOk ? 'ok' : 'down',
+			redis: redisOk ? 'ok' : 'down',
+		},
 	})
 })
 
 // API Routes
 app.use('/api/auth', authRoutes)
+// app.use('/api/billing', billingRoutes)
 app.use('/api/email', emailRoutes)
 app.use('/api/gmail', gmailRoutes)
 app.use('/api/leads', leadRoutes)
@@ -84,6 +112,7 @@ app.use('/api/settings', settingsRoutes)
 app.use('/api/smtp', smtpRoutes)
 app.use('/api/templates', templateRoutes)
 app.use('/api/admin/templates', adminTemplateRoutes)
+app.use('/api/admin', adminRoutes)
 app.use('/api/workflows', workflowRoutes)
 app.use('/api/webhooks', webhookRoutes)
 app.use('/api/notifications', notificationRoutes)
@@ -115,6 +144,7 @@ const startServer = async (): Promise<void> => {
 		// Start cron jobs
 		startGmailSyncJob()
 		startGmailWatchRenewalJob()
+		startDailyDigestJob()
 
 		// Graceful shutdown
 		const shutdown = async (signal: string) => {

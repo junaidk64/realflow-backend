@@ -12,13 +12,13 @@ export const startGmailWatchRenewalJob = (): void => {
 
     try {
       const now = new Date();
-      const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      const in48h = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
-      // Find connections whose watch expires within 24 hours or has already expired
+      // Find connections whose watch expires within 48 hours or has already expired
       const expiringConnections = await GmailConnection.find({
         isActive: true,
         $or: [
-          { watchExpiry: { $lt: tomorrow } },
+          { watchExpiry: { $lt: in48h } },
           { watchExpiry: null },
         ],
       });

@@ -11,7 +11,7 @@ import { decrypt } from '../utils/encryption';
 import logger from '../utils/logger';
 
 export const generateAutoReplyHTML = (lead: Partial<ILead>, settings?: Partial<ISettings>): string => {
-  const companyName = 'MovePro Solutions';
+  const companyName = settings?.businessName || 'Our Team';
   const customerName = lead.customerName || 'there';
   const movingDate = lead.movingDate || 'your chosen date';
   const fromAddr = lead.fromAddress || 'your current address';
@@ -35,7 +35,7 @@ export const generateAutoReplyHTML = (lead: Partial<ILead>, settings?: Partial<I
 <td align="center" style="padding-bottom:32px;">
 <div style="display:inline-block;background:rgba(255,255,255,0.1);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:16px;padding:16px 32px;">
 <span style="font-size:24px;font-weight:700;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;color:#667eea;letter-spacing:-0.5px;">
-🚛 ${companyName}
+${companyName}
 </span>
 </div>
 </td>
@@ -249,7 +249,7 @@ Reply to This Email →
 <td align="center" style="padding-top:32px;padding-bottom:8px;">
 <p style="margin:0;font-size:12px;color:rgba(255,255,255,0.3);line-height:1.6;">
 This is an automated response. Our team will follow up personally within 2 hours.<br>
-${companyName} • Powered by MovePro Automation
+${companyName}
 </p>
 </td>
 </tr>
