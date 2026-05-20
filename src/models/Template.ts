@@ -14,6 +14,9 @@ export interface ITemplate extends Document {
   status: TemplateStatus
   publishedAt: Date | null
   rejectionReason: string | null
+  // System template fields
+  isSystemTemplate: boolean
+  systemTemplateId: mongoose.Types.ObjectId | null
   createdAt: Date
   updatedAt: Date
 }
@@ -23,7 +26,8 @@ const TemplateSchema = new Schema<ITemplate>(
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      required: false,
+      default: null,
       index: true,
     },
     organizationId: {
@@ -72,6 +76,18 @@ const TemplateSchema = new Schema<ITemplate>(
       type: String,
       default: null,
     },
+    // Marks admin-created default templates — orgs can never edit these
+    isSystemTemplate: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    // For org copies: points back to the system template it was cloned from
+    systemTemplateId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Template',
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -82,6 +98,7 @@ TemplateSchema.index({ organizationId: 1, status: 1 })
 TemplateSchema.index({ organizationId: 1, businessType: 1 })
 TemplateSchema.index({ userId: 1, status: 1 })
 TemplateSchema.index({ status: 1, businessType: 1 })
+TemplateSchema.index({ isSystemTemplate: 1, businessType: 1 })
 
 export const Template = mongoose.model<ITemplate>('Template', TemplateSchema)
 export default Template

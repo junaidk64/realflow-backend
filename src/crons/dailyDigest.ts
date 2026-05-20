@@ -2,6 +2,7 @@ import cron from 'node-cron'
 import { User } from '../models/User'
 import { Lead } from '../models/Lead'
 import { Settings } from '../models/Settings'
+import { Workflow } from '../models/Workflow'
 import { sendEmailForUser } from '../services/emailService'
 import { generateDigestSummary } from '../services/aiService'
 import logger from '../utils/logger'
@@ -18,6 +19,15 @@ export const startDailyDigestJob = (): void => {
 
       for (const s of settings) {
         try {
+          // Respect daily_digest workflow toggle — skip if workflow exists but is disabled
+          const orgId = s.organizationId ?? null
+          const digestWorkflow = orgId
+            ? await Workflow.findOne({ organizationId: orgId, type: 'daily_digest' })
+            : await Workflow.findOne({ userId: s.userId, type: 'daily_digest' })
+          if (digestWorkflow && !digestWorkflow.isActive) {
+            logger.debug(`Daily digest skipped for user ${s.userId} — workflow disabled`)
+            continue
+          }
           const yesterday = new Date(Date.now() - 86_400_000)
           const leads = await Lead.find({
             userId: s.userId,

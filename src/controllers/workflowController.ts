@@ -5,10 +5,21 @@ import {
 	createWorkflow as createN8nWorkflow,
 	deactivateWorkflow,
 	deleteWorkflow as deleteN8nWorkflow,
-	getDefaultWorkflowTemplates,
 	getWorkflowExecutions as getN8nWorkflowExecutions,
 } from '../services/n8nService'
 import logger from '../utils/logger'
+
+// Workflows that are managed entirely by the backend (no n8n involved)
+const BACKEND_MANAGED_TYPES = new Set([
+	'lead_extraction',
+	'auto_reply',
+	'notification',
+	'spam_filtering',
+	'daily_digest',
+])
+
+// Workflows that require a template to be selected before enabling
+const TEMPLATE_REQUIRED_TYPES = new Set(['auto_reply'])
 
 export const getWorkflows = async (
 	req: Request,
@@ -36,12 +47,16 @@ export const createWorkflow = async (
 			description,
 			type,
 			webhookUrl,
+			isActive,
 			config: wfConfig,
 			n8nWorkflowJson,
 		} = req.body
 
+		const resolvedType = type || 'custom'
+		const needsEmailTemplate = TEMPLATE_REQUIRED_TYPES.has(resolvedType)
+
 		let n8nWorkflowId = ''
-		if (n8nWorkflowJson) {
+		if (n8nWorkflowJson && !BACKEND_MANAGED_TYPES.has(resolvedType)) {
 			try {
 				const n8nWf = await createN8nWorkflow(n8nWorkflowJson)
 				n8nWorkflowId = n8nWf.id
@@ -56,7 +71,9 @@ export const createWorkflow = async (
 			name,
 			description: description || '',
 			n8nWorkflowId,
-			type: type || 'custom',
+			type: resolvedType,
+			needsEmailTemplate,
+			isActive: typeof isActive === 'boolean' ? isActive : false,
 			webhookUrl: webhookUrl || '',
 			config: wfConfig || {},
 		})
@@ -83,12 +100,25 @@ export const updateWorkflow = async (
 			return
 		}
 
+		// Validate template is selected before allowing auto_reply activation
+		if (
+			isActive === true &&
+			workflow.needsEmailTemplate &&
+			!wfConfig?.templateId &&
+			!workflow.config?.templateId
+		) {
+			res.status(400).json({
+				success: false,
+				message: 'Please select an email template before enabling this workflow.',
+			})
+			return
+		}
+
 		if (name !== undefined) workflow.name = name
 		if (description !== undefined) workflow.description = description
 		if (webhookUrl !== undefined) workflow.webhookUrl = webhookUrl
 		if (isActive !== undefined) workflow.isActive = Boolean(isActive)
 		if (wfConfig !== undefined) {
-			// Deep-merge so partial updates don't wipe other config keys
 			const current = workflow.toObject().config ?? {}
 			workflow.set('config', { ...current, ...wfConfig })
 		}
@@ -154,7 +184,16 @@ export const toggleWorkflow = async (
 
 		const newState = !workflow.isActive
 
-		if (workflow.n8nWorkflowId) {
+		// Block enabling auto_reply without a template selected
+		if (newState && workflow.needsEmailTemplate && !workflow.config?.templateId) {
+			res.status(400).json({
+				success: false,
+				message: 'Please select an email template before enabling this workflow.',
+			})
+			return
+		}
+
+		if (workflow.n8nWorkflowId && !BACKEND_MANAGED_TYPES.has(workflow.type)) {
 			try {
 				if (newState) {
 					await activateWorkflow(workflow.n8nWorkflowId)
@@ -181,7 +220,52 @@ export const getWorkflowTemplates = async (
 	next: NextFunction,
 ): Promise<void> => {
 	try {
-		const templates = getDefaultWorkflowTemplates()
+		// Return the canonical list of all supported workflow types so the frontend can
+		// offer a "Add workflow" picker without hard-coding the list on the client.
+		const templates = [
+			{
+				type: 'lead_extraction',
+				name: 'Lead Extraction',
+				description: 'Automatically extract leads from incoming emails using AI.',
+				needsEmailTemplate: false,
+				backendManaged: true,
+			},
+			{
+				type: 'auto_reply',
+				name: 'Auto Reply',
+				description: 'Send an automatic reply email to every new lead using the selected template.',
+				needsEmailTemplate: true,
+				backendManaged: true,
+			},
+			{
+				type: 'notification',
+				name: 'Notifications',
+				description: 'Push in-app notifications whenever a new lead is detected.',
+				needsEmailTemplate: false,
+				backendManaged: true,
+			},
+			{
+				type: 'spam_filtering',
+				name: 'Spam Filtering',
+				description: 'Filter out spam and non-lead emails before processing.',
+				needsEmailTemplate: false,
+				backendManaged: true,
+			},
+			{
+				type: 'daily_digest',
+				name: 'Daily Digest',
+				description: 'Receive a daily email summary of your leads every morning at 7 AM.',
+				needsEmailTemplate: false,
+				backendManaged: true,
+			},
+			{
+				type: 'custom',
+				name: 'Custom Webhook',
+				description: 'Trigger a custom n8n workflow or external webhook when a lead is captured.',
+				needsEmailTemplate: false,
+				backendManaged: false,
+			},
+		]
 		res.json({ success: true, data: { templates } })
 	} catch (error) {
 		next(error)

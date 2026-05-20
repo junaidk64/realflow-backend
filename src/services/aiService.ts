@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { BusinessType, LEAD_PROFILES } from '../config/leadProfiles'
 import { UsageLog } from '../models/UsageLog'
 import logger from '../utils/logger'
+import { classifyEmail, summarizeEmailThread } from './geminiService'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -28,11 +29,25 @@ export async function extractLeadFromEmail(
   emailFrom: string,
   businessType: BusinessType,
   userId?: string,
-): Promise<AiLeadResult> {
+  emailSubject = '',
+): Promise<AiLeadResult | null> {
+  // Step 1: Gemini classifies spam for free — skip Claude entirely if spam
+  const complexity = await classifyEmail(emailSubject, emailBody)
+  if (complexity === 'spam') {
+    logger.debug(`Gemini classified email from ${emailFrom} as spam — skipped Claude`)
+    return null
+  }
+
   const profile = LEAD_PROFILES[businessType]
 
+  // Step 2: Long/complex emails → Gemini summarizes to ~200 words before Claude sees them
+  const processedBody =
+    complexity === 'complex' || emailBody.length > 800
+      ? await summarizeEmailThread(emailBody)
+      : emailBody.slice(0, 1200)
+
   // Truncate to save tokens — 1200 chars covers most emails including bottom signatures
-  const truncatedBody = emailBody.slice(0, 1200)
+  const truncatedBody = processedBody.slice(0, 1200)
   const emptyFields = profile.fields.reduce<Record<string, null>>(
     (acc, f) => ({ ...acc, [f]: null }),
     {},
@@ -100,6 +115,82 @@ async function logUsage(userId: string, usage: Anthropic.Usage & { cache_read_in
   })
 
   logger.debug(`AI call: ${inputTokens}in/${outputTokens}out tokens, $${costUsd.toFixed(6)}`)
+}
+
+// ─── Reply Drafting ───────────────────────────────────────────────────────────
+
+const REPLY_SYSTEM = `You are a professional email assistant. Write concise, warm reply drafts for business owners.
+3-5 sentences max. Plain text only. No subject line. No placeholder brackets like [Name] — use the real name if known.
+Match the customer's tone: urgent emails get prompt/direct replies, friendly emails get warm replies.`
+
+export interface ReplyDraftResult {
+  draft: string
+  model: 'claude-haiku' | 'skipped'
+  costUsd: number
+}
+
+/**
+ * Generate a professional reply draft using Claude Haiku.
+ * The Gemini-summarized body is passed in so Claude sees fewer tokens.
+ * Returns null if email was pre-classified as spam.
+ */
+export async function generateReplyDraft(
+  emailBody: string,
+  emailSubject: string,
+  customerName: string | null,
+  companyName: string,
+  businessType: string,
+  tone: 'professional' | 'friendly' | 'formal' = 'professional',
+  userId?: string,
+): Promise<ReplyDraftResult> {
+  const greeting = customerName ? `Hi ${customerName}` : 'Hello'
+
+  const userPrompt = `${companyName} is a ${businessType} business. Tone: ${tone}.
+Customer name: ${customerName || 'unknown'}
+Email subject: ${emailSubject}
+Customer message:
+${emailBody.slice(0, 800)}
+
+Write a ${tone} reply starting with "${greeting},":`
+
+  const response = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 250,
+    system: [
+      {
+        type: 'text',
+        text: REPLY_SYSTEM,
+        cache_control: { type: 'ephemeral' },
+      } as Anthropic.TextBlockParam & { cache_control: { type: string } },
+    ],
+    messages: [{ role: 'user', content: userPrompt }],
+  })
+
+  const usage = response.usage as Anthropic.Usage & { cache_read_input_tokens?: number | null }
+  const cachedTokens = usage.cache_read_input_tokens ?? 0
+  const costUsd =
+    (usage.input_tokens - cachedTokens) * 0.0000008 +
+    cachedTokens * 0.00000008 +
+    usage.output_tokens * 0.000004
+
+  if (userId) {
+    UsageLog.create({
+      userId,
+      aiModel: 'claude-haiku-4-5-20251001',
+      inputTokens: usage.input_tokens,
+      outputTokens: usage.output_tokens,
+      cachedTokens,
+      costUsd,
+    }).catch(() => {})
+  }
+
+  logger.debug(`Reply draft: ${usage.input_tokens}in/${usage.output_tokens}out tokens, $${costUsd.toFixed(6)}`)
+
+  return {
+    draft: (response.content[0] as { text: string }).text.trim(),
+    model: 'claude-haiku',
+    costUsd,
+  }
 }
 
 const DIGEST_SYSTEM = 'You write concise, professional morning email digests for business owners. 2 sentences max. Plain text only, no emojis. Tone: professional and motivating.'

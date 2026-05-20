@@ -445,6 +445,7 @@ export const sendAutoReply = async (
 	gmailConnection: IGmailConnection,
 	settings?: Partial<ISettings>,
 	userId?: string,
+	templateId?: string | null,
 ): Promise<{
 	success: boolean
 	messageId?: string
@@ -459,7 +460,44 @@ export const sendAutoReply = async (
 	const subject =
 		settings?.autoReplySubject ||
 		`Thank you for your enquiry - We'll be in touch soon!`
-	const htmlContent = generateAutoReplyHTML(lead, settings)
+
+	let htmlContent: string
+
+	if (templateId) {
+		// Render the org-selected template with lead variables
+		const orgTemplate = await Template.findOne({
+			_id: templateId,
+			isSystemTemplate: false,
+		})
+		if (orgTemplate) {
+			const extraFields =
+				lead.extraFields instanceof Map
+					? Object.fromEntries(lead.extraFields)
+					: (lead.extraFields as unknown as Record<string, unknown>) || {}
+
+			const vars: Record<string, string> = {
+				customerName: lead.customerName || '',
+				customerEmail: lead.customerEmail || '',
+				customerPhone: lead.customerPhone || '',
+				fromAddress: lead.fromAddress || '',
+				toAddress: lead.toAddress || '',
+				movingDate: lead.movingDate || '',
+				services: (lead.services || []).join(', '),
+				businessName: settings?.businessName || '',
+				emailSignature: settings?.emailSignature || '',
+				timestamp: new Date().toISOString(),
+				...Object.fromEntries(Object.entries(extraFields).map(([k, v]) => [k, String(v || '')])),
+			}
+			htmlContent = orgTemplate.htmlContent.replace(/\{\{(\w+)\}\}/g, (_, key) =>
+				String(vars[key] ?? ''),
+			)
+		} else {
+			// Template not found — fall back to generated HTML
+			htmlContent = generateAutoReplyHTML(lead, settings)
+		}
+	} else {
+		htmlContent = generateAutoReplyHTML(lead, settings)
+	}
 
 	// Try SMTP first if user has an active SMTP connection
 	if (userId) {

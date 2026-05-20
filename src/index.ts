@@ -23,6 +23,7 @@ import userRoutes from './routes/users'
 import settingsRoutes from './routes/settings'
 import smtpRoutes from './routes/smtp'
 import templateRoutes from './routes/templates'
+import orgTemplateRoutes from './routes/orgTemplates'
 import webhookRoutes from './routes/webhooks'
 import workflowRoutes from './routes/workflows'
 
@@ -112,6 +113,7 @@ app.use('/api/leads', leadRoutes)
 app.use('/api/settings', settingsRoutes)
 app.use('/api/smtp', smtpRoutes)
 app.use('/api/templates', templateRoutes)
+app.use('/api/org-templates', orgTemplateRoutes)
 app.use('/api/admin/templates', adminTemplateRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/workflows', workflowRoutes)

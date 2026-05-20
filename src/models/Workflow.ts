@@ -8,14 +8,23 @@ export interface IWorkflowConfig {
 	[key: string]: unknown
 }
 
+export type WorkflowType =
+	| 'lead_extraction'
+	| 'auto_reply'
+	| 'notification'
+	| 'spam_filtering'
+	| 'daily_digest'
+	| 'custom'
+
 export interface IWorkflow extends Document {
 	userId: mongoose.Types.ObjectId
 	organizationId: mongoose.Types.ObjectId | null
 	name: string
 	description: string
 	n8nWorkflowId: string
-	type: 'lead_extraction' | 'auto_reply' | 'notification' | 'custom'
+	type: WorkflowType
 	isActive: boolean
+	needsEmailTemplate: boolean
 	triggerCount: number
 	lastTriggered: Date | null
 	config: IWorkflowConfig
@@ -62,10 +71,15 @@ const WorkflowSchema = new Schema<IWorkflow>(
 		},
 		type: {
 			type: String,
-			enum: ['lead_extraction', 'auto_reply', 'notification', 'custom'],
+			enum: ['lead_extraction', 'auto_reply', 'notification', 'spam_filtering', 'daily_digest', 'custom'],
 			default: 'custom',
 		},
 		isActive: {
+			type: Boolean,
+			default: false,
+		},
+		// When true the frontend must show a template picker before the workflow can be enabled
+		needsEmailTemplate: {
 			type: Boolean,
 			default: false,
 		},

@@ -131,8 +131,14 @@ const leadExtractionWorker = new Worker(
 		const minConfidence = settings?.minimumConfidence || 30
 		const emailBody = textBody || htmlBody || ''
 
-		// Spam pre-filter — zero AI cost on junk
-		if (isSpam(emailBody, fromEmail, businessType)) {
+		// Spam pre-filter — active by default; disabled only if a spam_filtering workflow
+		// exists for this org and is explicitly set to inactive
+		const orgIdForSpam = settings?.organizationId ?? null
+		const spamWorkflow = orgIdForSpam
+			? await Workflow.findOne({ organizationId: orgIdForSpam, type: 'spam_filtering' })
+			: await Workflow.findOne({ userId, type: 'spam_filtering' })
+		const spamFilterActive = !spamWorkflow || spamWorkflow.isActive
+		if (spamFilterActive && isSpam(emailBody, fromEmail, businessType)) {
 			logger.debug(`Spam filtered for user ${userId}: ${subject}`)
 			return { isLead: false, reason: 'spam' }
 		}
@@ -149,7 +155,13 @@ const leadExtractionWorker = new Worker(
 		let confidence = 0
 
 		try {
-			const aiResult = await aiExtract(emailBody, fromEmail, businessType, userId)
+			const aiResult = await aiExtract(emailBody, fromEmail, businessType, userId, subject)
+
+			// null = Gemini pre-classified as spam, skip entirely
+			if (aiResult === null) {
+				logger.debug(`Gemini: spam email skipped for user ${userId}: ${subject}`)
+				return { isLead: false, reason: 'spam' }
+			}
 
 			if (!aiResult.isLead) {
 				logger.debug(`AI: not a lead for user ${userId}: ${subject}`)
@@ -208,7 +220,6 @@ const leadExtractionWorker = new Worker(
 			rawEmailFrom: fromEmail,
 			customerName,
 			customerEmail,
-			customerPhone,
 			businessType,
 			extraFields: extractedFields,
 			notes: '',
@@ -225,22 +236,45 @@ const leadExtractionWorker = new Worker(
 		await EmailLog.findByIdAndUpdate(emailLogId, { leadId: lead._id })
 		logger.info(`Lead created: ${lead._id} from ${fromEmail}`)
 
-		await createNotification(
-			userId,
-			'new_lead',
-			'New Lead Detected',
-			`${customerName || customerEmail} — score ${aiScore ?? confidence}`,
-			String(lead._id),
-		)
+		// Load all active workflows for this org to drive feature toggles
+		const orgId = settings?.organizationId ?? null
+		const activeWorkflows = orgId
+			? await Workflow.find({ organizationId: orgId, isActive: true })
+			: await Workflow.find({ userId, isActive: true })
 
-		if (settings?.autoReply && customerEmail) {
-			await autoReplyQueue.add('send-auto-reply', { leadId: lead._id, userId, gmailConnectionId })
+		const hasActiveWorkflow = (type: string) => activeWorkflows.some(w => w.type === type)
+
+		// Notifications — on by default unless a notification workflow exists and is inactive
+		const notificationWorkflowExists = await Workflow.exists({ $or: [{ organizationId: orgId }, { userId }], type: 'notification' })
+		if (!notificationWorkflowExists || hasActiveWorkflow('notification')) {
+			await createNotification(
+				userId,
+				'new_lead',
+				'New Lead Detected',
+				`${customerName || customerEmail} — score ${aiScore ?? confidence}`,
+				String(lead._id),
+			)
 		}
 
-		const activeWorkflows = await Workflow.find({ userId, isActive: true })
+		// Auto-reply — prefer workflow config (with templateId), fall back to settings flag
+		const autoReplyWorkflow = activeWorkflows.find(w => w.type === 'auto_reply')
+		if (autoReplyWorkflow && customerEmail) {
+			const templateId = autoReplyWorkflow.config?.templateId?.toString() ?? null
+			await autoReplyQueue.add('send-auto-reply', {
+				leadId: lead._id,
+				userId,
+				gmailConnectionId,
+				templateId,
+			})
+		} else if (settings?.autoReply && customerEmail) {
+			// Legacy path: settings.autoReply flag with no workflow configured
+			await autoReplyQueue.add('send-auto-reply', { leadId: lead._id, userId, gmailConnectionId, templateId: null })
+		}
+
+		// Custom/n8n workflows — skip all backend-managed types to prevent double execution
+		const backendManagedTypes = new Set(['lead_extraction', 'auto_reply', 'notification', 'spam_filtering', 'daily_digest'])
 		for (const workflow of activeWorkflows) {
-			// auto_reply is handled by the backend directly — skip to prevent double-send
-			if (workflow.webhookUrl && workflow.type !== 'auto_reply') {
+			if (workflow.webhookUrl && !backendManagedTypes.has(workflow.type)) {
 				await n8nTriggerQueue.add('trigger-n8n', {
 					leadId: lead._id,
 					userId,
@@ -260,7 +294,7 @@ const leadExtractionWorker = new Worker(
 const autoReplyWorker = new Worker(
 	'auto-reply',
 	async (job: Job) => {
-		const { leadId, userId, gmailConnectionId } = job.data
+		const { leadId, userId, gmailConnectionId, templateId } = job.data
 
 		const [lead, gmailConnection, settings] = await Promise.all([
 			Lead.findById(leadId),
@@ -274,7 +308,7 @@ const autoReplyWorker = new Worker(
 			return { skipped: true }
 		}
 
-		const result = await sendAutoReply(lead, gmailConnection, settings || undefined, userId)
+		const result = await sendAutoReply(lead, gmailConnection, settings || undefined, userId, templateId || null)
 
 		if (result.success) {
 			const emailLog = await EmailLog.create({
