@@ -16,6 +16,7 @@ import { isSpam } from './spamFilter'
 import { triggerWebhook } from './n8nService'
 import { createNotification } from './notificationService'
 import { BusinessType } from '../config/leadProfiles'
+import { BACKEND_MANAGED_TYPES } from '../config/workflowCatalogue'
 
 const PLAN_LIMITS: Record<string, number> = { free: 30, basic: 500, pro: Infinity }
 
@@ -131,14 +132,21 @@ const leadExtractionWorker = new Worker(
 		const minConfidence = settings?.minimumConfidence || 30
 		const emailBody = textBody || htmlBody || ''
 
-		// Spam pre-filter — active by default; disabled only if a spam_filtering workflow
-		// exists for this org and is explicitly set to inactive
-		const orgIdForSpam = settings?.organizationId ?? null
-		const spamWorkflow = orgIdForSpam
-			? await Workflow.findOne({ organizationId: orgIdForSpam, type: 'spam_filtering' })
+		// ── Gate: lead_extraction workflow must be installed AND active ──────────
+		const orgIdForGates = settings?.organizationId ?? null
+		const leWorkflow = orgIdForGates
+			? await Workflow.findOne({ organizationId: orgIdForGates, type: 'lead_extraction' })
+			: await Workflow.findOne({ userId, type: 'lead_extraction' })
+		if (!leWorkflow || !leWorkflow.isActive) {
+			logger.debug(`Lead extraction skipped — workflow not installed or disabled (user ${userId})`)
+			return { skipped: 'lead_extraction_disabled' }
+		}
+
+		// ── Gate: spam_filtering workflow must be installed AND active ────────
+		const spamWorkflow = orgIdForGates
+			? await Workflow.findOne({ organizationId: orgIdForGates, type: 'spam_filtering' })
 			: await Workflow.findOne({ userId, type: 'spam_filtering' })
-		const spamFilterActive = !spamWorkflow || spamWorkflow.isActive
-		if (spamFilterActive && isSpam(emailBody, fromEmail, businessType)) {
+		if (spamWorkflow?.isActive && isSpam(emailBody, fromEmail, businessType)) {
 			logger.debug(`Spam filtered for user ${userId}: ${subject}`)
 			return { isLead: false, reason: 'spam' }
 		}
@@ -237,16 +245,14 @@ const leadExtractionWorker = new Worker(
 		logger.info(`Lead created: ${lead._id} from ${fromEmail}`)
 
 		// Load all active workflows for this org to drive feature toggles
-		const orgId = settings?.organizationId ?? null
-		const activeWorkflows = orgId
-			? await Workflow.find({ organizationId: orgId, isActive: true })
+		const activeWorkflows = orgIdForGates
+			? await Workflow.find({ organizationId: orgIdForGates, isActive: true })
 			: await Workflow.find({ userId, isActive: true })
 
-		const hasActiveWorkflow = (type: string) => activeWorkflows.some(w => w.type === type)
+		const hasActiveWorkflow = (type: string) => activeWorkflows.some((w) => w.type === type)
 
-		// Notifications — on by default unless a notification workflow exists and is inactive
-		const notificationWorkflowExists = await Workflow.exists({ $or: [{ organizationId: orgId }, { userId }], type: 'notification' })
-		if (!notificationWorkflowExists || hasActiveWorkflow('notification')) {
+		// ── Gate: notification workflow must be installed AND active ──────────
+		if (hasActiveWorkflow('notification')) {
 			await createNotification(
 				userId,
 				'new_lead',
@@ -256,8 +262,10 @@ const leadExtractionWorker = new Worker(
 			)
 		}
 
-		// Auto-reply — prefer workflow config (with templateId), fall back to settings flag
-		const autoReplyWorkflow = activeWorkflows.find(w => w.type === 'auto_reply')
+		// ── Gate: auto_reply workflow must be installed AND active ────────────
+		// Legacy settings.autoReply fallback is intentionally removed. The workflow
+		// record is the single source of truth.
+		const autoReplyWorkflow = activeWorkflows.find((w) => w.type === 'auto_reply')
 		if (autoReplyWorkflow && customerEmail) {
 			const templateId = autoReplyWorkflow.config?.templateId?.toString() ?? null
 			await autoReplyQueue.add('send-auto-reply', {
@@ -266,15 +274,11 @@ const leadExtractionWorker = new Worker(
 				gmailConnectionId,
 				templateId,
 			})
-		} else if (settings?.autoReply && customerEmail) {
-			// Legacy path: settings.autoReply flag with no workflow configured
-			await autoReplyQueue.add('send-auto-reply', { leadId: lead._id, userId, gmailConnectionId, templateId: null })
 		}
 
 		// Custom/n8n workflows — skip all backend-managed types to prevent double execution
-		const backendManagedTypes = new Set(['lead_extraction', 'auto_reply', 'notification', 'spam_filtering', 'daily_digest'])
 		for (const workflow of activeWorkflows) {
-			if (workflow.webhookUrl && !backendManagedTypes.has(workflow.type)) {
+			if (workflow.webhookUrl && !BACKEND_MANAGED_TYPES.has(workflow.type)) {
 				await n8nTriggerQueue.add('trigger-n8n', {
 					leadId: lead._id,
 					userId,

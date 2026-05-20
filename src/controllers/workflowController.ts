@@ -1,6 +1,12 @@
 import { NextFunction, Request, Response } from 'express'
 import { Workflow } from '../models/Workflow'
 import {
+	BACKEND_MANAGED_TYPES,
+	SINGLETON_TYPES,
+	WORKFLOW_CATALOGUE,
+	getCatalogueItem,
+} from '../config/workflowCatalogue'
+import {
 	activateWorkflow,
 	createWorkflow as createN8nWorkflow,
 	deactivateWorkflow,
@@ -9,17 +15,95 @@ import {
 } from '../services/n8nService'
 import logger from '../utils/logger'
 
-// Workflows that are managed entirely by the backend (no n8n involved)
-const BACKEND_MANAGED_TYPES = new Set([
-	'lead_extraction',
-	'auto_reply',
-	'notification',
-	'spam_filtering',
-	'daily_digest',
-])
+// ─── Catalogue ────────────────────────────────────────────────────────────────
 
-// Workflows that require a template to be selected before enabling
-const TEMPLATE_REQUIRED_TYPES = new Set(['auto_reply'])
+/**
+ * GET /api/workflows/catalogue
+ * Returns all available workflow types merged with the org's installed records.
+ */
+export const getCatalogue = async (
+	req: Request,
+	res: Response,
+	next: NextFunction,
+): Promise<void> => {
+	try {
+		const orgId = req.user!.organizationId
+
+		const installed = await Workflow.find({ organizationId: orgId }).lean()
+		const installedByType = new Map(installed.map((w) => [w.type as string, w]))
+
+		const items = WORKFLOW_CATALOGUE.map((def) => {
+			const workflow = installedByType.get(def.type) ?? null
+			return {
+				...def,
+				installed: workflow !== null,
+				workflow,
+			}
+		})
+
+		res.json({ success: true, data: { catalogue: items } })
+	} catch (error) {
+		next(error)
+	}
+}
+
+// ─── Install ──────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/workflows/install/:type
+ * Installs a backend-managed workflow for the org. Singleton types (all backend-
+ * managed ones) can only be installed once per org. Created inactive by default
+ * so the user must explicitly enable.
+ */
+export const installWorkflow = async (
+	req: Request,
+	res: Response,
+	next: NextFunction,
+): Promise<void> => {
+	try {
+		const { type } = req.params
+		const orgId = req.user!.organizationId
+		const userId = req.user!.userId
+
+		const def = getCatalogueItem(type)
+		if (!def) {
+			res.status(400).json({ success: false, message: `Unknown workflow type: ${type}` })
+			return
+		}
+
+		// Singleton check — backend-managed types may only be installed once per org
+		if (SINGLETON_TYPES.has(type)) {
+			const existing = await Workflow.findOne({ organizationId: orgId, type })
+			if (existing) {
+				res.status(409).json({
+					success: false,
+					message: `${def.name} is already installed for this organisation.`,
+					data: { workflow: existing },
+				})
+				return
+			}
+		}
+
+		const workflow = await Workflow.create({
+			userId,
+			organizationId: orgId,
+			name: def.name,
+			description: def.description,
+			type,
+			needsEmailTemplate: def.needsEmailTemplate,
+			isActive: false,
+			webhookUrl: '',
+			config: def.defaultConfig,
+			n8nWorkflowId: '',
+		})
+
+		res.status(201).json({ success: true, data: { workflow } })
+	} catch (error) {
+		next(error)
+	}
+}
+
+// ─── List installed workflows ─────────────────────────────────────────────────
 
 export const getWorkflows = async (
 	req: Request,
@@ -36,27 +120,32 @@ export const getWorkflows = async (
 	}
 }
 
+// ─── Create custom (n8n / webhook) workflow ───────────────────────────────────
+
+/**
+ * POST /api/workflows
+ * Only for custom/n8n workflows. Backend-managed types must use POST /install/:type.
+ */
 export const createWorkflow = async (
 	req: Request,
 	res: Response,
 	next: NextFunction,
 ): Promise<void> => {
 	try {
-		const {
-			name,
-			description,
-			type,
-			webhookUrl,
-			isActive,
-			config: wfConfig,
-			n8nWorkflowJson,
-		} = req.body
+		const { name, description, webhookUrl, config: wfConfig, n8nWorkflowJson } = req.body
 
-		const resolvedType = type || 'custom'
-		const needsEmailTemplate = TEMPLATE_REQUIRED_TYPES.has(resolvedType)
+		// Prevent creating backend-managed types via the general endpoint
+		const requestedType = req.body.type || 'custom'
+		if (BACKEND_MANAGED_TYPES.has(requestedType)) {
+			res.status(400).json({
+				success: false,
+				message: `Use POST /api/workflows/install/${requestedType} to install this workflow.`,
+			})
+			return
+		}
 
 		let n8nWorkflowId = ''
-		if (n8nWorkflowJson && !BACKEND_MANAGED_TYPES.has(resolvedType)) {
+		if (n8nWorkflowJson) {
 			try {
 				const n8nWf = await createN8nWorkflow(n8nWorkflowJson)
 				n8nWorkflowId = n8nWf.id
@@ -71,9 +160,9 @@ export const createWorkflow = async (
 			name,
 			description: description || '',
 			n8nWorkflowId,
-			type: resolvedType,
-			needsEmailTemplate,
-			isActive: typeof isActive === 'boolean' ? isActive : false,
+			type: 'custom',
+			needsEmailTemplate: false,
+			isActive: false,
 			webhookUrl: webhookUrl || '',
 			config: wfConfig || {},
 		})
@@ -83,6 +172,8 @@ export const createWorkflow = async (
 		next(error)
 	}
 }
+
+// ─── Update ───────────────────────────────────────────────────────────────────
 
 export const updateWorkflow = async (
 	req: Request,
@@ -130,6 +221,8 @@ export const updateWorkflow = async (
 	}
 }
 
+// ─── Delete / Uninstall ───────────────────────────────────────────────────────
+
 export const deleteWorkflow = async (
 	req: Request,
 	res: Response,
@@ -151,19 +244,18 @@ export const deleteWorkflow = async (
 			try {
 				await deleteN8nWorkflow(workflow.n8nWorkflowId)
 			} catch (n8nError) {
-				logger.warn(
-					`Failed to delete n8n workflow ${workflow.n8nWorkflowId}:`,
-					n8nError,
-				)
+				logger.warn(`Failed to delete n8n workflow ${workflow.n8nWorkflowId}:`, n8nError)
 			}
 		}
 
 		await Workflow.findByIdAndDelete(id)
-		res.json({ success: true, message: 'Workflow deleted' })
+		res.json({ success: true, message: 'Workflow uninstalled' })
 	} catch (error) {
 		next(error)
 	}
 }
+
+// ─── Toggle ───────────────────────────────────────────────────────────────────
 
 export const toggleWorkflow = async (
 	req: Request,
@@ -184,7 +276,7 @@ export const toggleWorkflow = async (
 
 		const newState = !workflow.isActive
 
-		// Block enabling auto_reply without a template selected
+		// Block enabling auto_reply without a template
 		if (newState && workflow.needsEmailTemplate && !workflow.config?.templateId) {
 			res.status(400).json({
 				success: false,
@@ -193,6 +285,7 @@ export const toggleWorkflow = async (
 			return
 		}
 
+		// Only call n8n for custom workflows
 		if (workflow.n8nWorkflowId && !BACKEND_MANAGED_TYPES.has(workflow.type)) {
 			try {
 				if (newState) {
@@ -214,63 +307,53 @@ export const toggleWorkflow = async (
 	}
 }
 
-export const getWorkflowTemplates = async (
-	_req: Request,
+// ─── Assign template to auto_reply workflow ───────────────────────────────────
+
+/**
+ * PATCH /api/workflows/:id/template
+ * Convenience endpoint to assign a template to an auto_reply workflow.
+ * Also enables the workflow if a template wasn't previously set.
+ */
+export const assignTemplate = async (
+	req: Request,
 	res: Response,
 	next: NextFunction,
 ): Promise<void> => {
 	try {
-		// Return the canonical list of all supported workflow types so the frontend can
-		// offer a "Add workflow" picker without hard-coding the list on the client.
-		const templates = [
-			{
-				type: 'lead_extraction',
-				name: 'Lead Extraction',
-				description: 'Automatically extract leads from incoming emails using AI.',
-				needsEmailTemplate: false,
-				backendManaged: true,
-			},
-			{
-				type: 'auto_reply',
-				name: 'Auto Reply',
-				description: 'Send an automatic reply email to every new lead using the selected template.',
-				needsEmailTemplate: true,
-				backendManaged: true,
-			},
-			{
-				type: 'notification',
-				name: 'Notifications',
-				description: 'Push in-app notifications whenever a new lead is detected.',
-				needsEmailTemplate: false,
-				backendManaged: true,
-			},
-			{
-				type: 'spam_filtering',
-				name: 'Spam Filtering',
-				description: 'Filter out spam and non-lead emails before processing.',
-				needsEmailTemplate: false,
-				backendManaged: true,
-			},
-			{
-				type: 'daily_digest',
-				name: 'Daily Digest',
-				description: 'Receive a daily email summary of your leads every morning at 7 AM.',
-				needsEmailTemplate: false,
-				backendManaged: true,
-			},
-			{
-				type: 'custom',
-				name: 'Custom Webhook',
-				description: 'Trigger a custom n8n workflow or external webhook when a lead is captured.',
-				needsEmailTemplate: false,
-				backendManaged: false,
-			},
-		]
-		res.json({ success: true, data: { templates } })
+		const { id } = req.params
+		const { templateId, subject } = req.body
+
+		if (!templateId) {
+			res.status(400).json({ success: false, message: 'templateId is required' })
+			return
+		}
+
+		const workflow = await Workflow.findOne({
+			_id: id,
+			organizationId: req.user!.organizationId,
+			type: 'auto_reply',
+		})
+
+		if (!workflow) {
+			res.status(404).json({ success: false, message: 'Auto reply workflow not found' })
+			return
+		}
+
+		const current = workflow.toObject().config ?? {}
+		workflow.set('config', {
+			...current,
+			templateId,
+			subject: subject ?? current.subject ?? null,
+		})
+
+		await workflow.save()
+		res.json({ success: true, data: { workflow } })
 	} catch (error) {
 		next(error)
 	}
 }
+
+// ─── Executions (n8n only) ────────────────────────────────────────────────────
 
 export const getWorkflowExecutions = async (
 	req: Request,
@@ -302,11 +385,13 @@ export const getWorkflowExecutions = async (
 }
 
 export default {
+	getCatalogue,
+	installWorkflow,
 	getWorkflows,
 	createWorkflow,
 	updateWorkflow,
 	deleteWorkflow,
 	toggleWorkflow,
-	getWorkflowTemplates,
+	assignTemplate,
 	getWorkflowExecutions,
 }

@@ -19,13 +19,13 @@ export const startDailyDigestJob = (): void => {
 
       for (const s of settings) {
         try {
-          // Respect daily_digest workflow toggle — skip if workflow exists but is disabled
+          // daily_digest workflow must be installed AND active — strict gate
           const orgId = s.organizationId ?? null
           const digestWorkflow = orgId
             ? await Workflow.findOne({ organizationId: orgId, type: 'daily_digest' })
             : await Workflow.findOne({ userId: s.userId, type: 'daily_digest' })
-          if (digestWorkflow && !digestWorkflow.isActive) {
-            logger.debug(`Daily digest skipped for user ${s.userId} — workflow disabled`)
+          if (!digestWorkflow || !digestWorkflow.isActive) {
+            logger.debug(`Daily digest skipped for user ${s.userId} — workflow not installed or disabled`)
             continue
           }
           const yesterday = new Date(Date.now() - 86_400_000)

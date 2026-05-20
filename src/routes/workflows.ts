@@ -1,10 +1,12 @@
 import { Router } from 'express'
 import {
+	assignTemplate,
 	createWorkflow,
 	deleteWorkflow,
+	getCatalogue,
 	getWorkflowExecutions,
 	getWorkflows,
-	getWorkflowTemplates,
+	installWorkflow,
 	toggleWorkflow,
 	updateWorkflow,
 } from '../controllers/workflowController'
@@ -14,12 +16,23 @@ const router: Router = Router()
 
 router.use(verifyToken)
 
+// Catalogue — available workflow types with installed status
+router.get('/catalogue', getCatalogue)
+
+// Install a backend-managed workflow type
+router.post('/install/:type', installWorkflow)
+
+// Installed workflows list
 router.get('/', getWorkflows)
+
+// Custom / n8n workflow creation
 router.post('/', createWorkflow)
-router.get('/templates', getWorkflowTemplates)
+
+// Per-workflow operations
 router.patch('/:id', updateWorkflow)
 router.delete('/:id', deleteWorkflow)
 router.post('/:id/toggle', toggleWorkflow)
+router.patch('/:id/template', assignTemplate)
 router.get('/:id/executions', getWorkflowExecutions)
 
 export default router
