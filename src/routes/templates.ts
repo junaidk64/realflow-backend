@@ -3,6 +3,7 @@ import {
 	createTemplate,
 	deleteTemplate,
 	getPublicTemplates,
+	getSystemTemplates,
 	getTemplate,
 	getTemplates,
 	publishTemplate,
@@ -16,8 +17,9 @@ const router: Router = Router()
 
 router.use(verifyToken)
 
-// Must be before /:id to prevent "public" being treated as an ID
+// Must be before /:id to prevent "public" or "system" being treated as an ID
 router.get('/public', apiLimiter, getPublicTemplates)
+router.get('/system', apiLimiter, getSystemTemplates)
 
 router.get('/', apiLimiter, getTemplates)
 router.post('/', createTemplate)

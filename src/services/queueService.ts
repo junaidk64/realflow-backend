@@ -1,6 +1,8 @@
-import crypto from 'crypto'
 import { Job, Queue, Worker } from 'bullmq'
+import crypto from 'crypto'
 import { config } from '../config'
+import { BusinessType } from '../config/leadProfiles'
+import { BACKEND_MANAGED_TYPES } from '../config/workflowCatalogue'
 import { EmailLog } from '../models/EmailLog'
 import { GmailConnection } from '../models/GmailConnection'
 import { Lead } from '../models/Lead'
@@ -8,17 +10,19 @@ import { Settings } from '../models/Settings'
 import { User } from '../models/User'
 import { Workflow } from '../models/Workflow'
 import logger from '../utils/logger'
+import { extractLeadFromEmail as aiExtract } from './aiService'
 import { buildAutoReplyPayload, sendAutoReply } from './emailService'
 import { processNewEmails } from './gmailService'
 import { extractLeadFromEmail as legacyExtract } from './leadExtractionService'
-import { extractLeadFromEmail as aiExtract } from './aiService'
-import { isSpam } from './spamFilter'
 import { triggerWebhook } from './n8nService'
 import { createNotification } from './notificationService'
-import { BusinessType } from '../config/leadProfiles'
-import { BACKEND_MANAGED_TYPES } from '../config/workflowCatalogue'
+import { isSpam } from './spamFilter'
 
-const PLAN_LIMITS: Record<string, number> = { free: 30, basic: 500, pro: Infinity }
+const PLAN_LIMITS: Record<string, number> = {
+	free: 30,
+	basic: 500,
+	pro: Infinity,
+}
 
 const redisConnection = {
 	host: new URL(config.redis.url).hostname,
@@ -29,27 +33,43 @@ const redisConnection = {
 
 export const emailProcessingQueue = new Queue('email-processing', {
 	connection: redisConnection,
-	defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+	defaultJobOptions: {
+		attempts: 3,
+		backoff: { type: 'exponential', delay: 5000 },
+	},
 })
 
 export const leadExtractionQueue = new Queue('lead-extraction', {
 	connection: redisConnection,
-	defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 3000 } },
+	defaultJobOptions: {
+		attempts: 3,
+		backoff: { type: 'exponential', delay: 3000 },
+	},
 })
 
 export const autoReplyQueue = new Queue('auto-reply', {
 	connection: redisConnection,
-	defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+	defaultJobOptions: {
+		attempts: 3,
+		backoff: { type: 'exponential', delay: 5000 },
+	},
 })
 
 export const n8nTriggerQueue = new Queue('n8n-trigger', {
 	connection: redisConnection,
-	defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 3000 } },
+	defaultJobOptions: {
+		attempts: 3,
+		backoff: { type: 'exponential', delay: 3000 },
+	},
 })
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function leadFingerprint(email: string, phone: string, businessType: string): string {
+function leadFingerprint(
+	email: string,
+	phone: string,
+	businessType: string,
+): string {
 	const raw = `${email.toLowerCase()}|${phone.replace(/\D/g, '')}|${businessType}`
 	return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16)
 }
@@ -63,7 +83,10 @@ async function isWithinPlanLimit(userId: string): Promise<boolean> {
 	monthStart.setDate(1)
 	monthStart.setHours(0, 0, 0, 0)
 
-	const count = await Lead.countDocuments({ userId, createdAt: { $gte: monthStart } })
+	const count = await Lead.countDocuments({
+		userId,
+		createdAt: { $gte: monthStart },
+	})
 	return count < limit
 }
 
@@ -119,7 +142,17 @@ const emailProcessingWorker = new Worker(
 const leadExtractionWorker = new Worker(
 	'lead-extraction',
 	async (job: Job) => {
-		const { userId, gmailConnectionId, emailLogId, messageId, subject, textBody, htmlBody, fromEmail } = job.data
+		const {
+			userId,
+			gmailConnectionId,
+			emailLogId,
+			messageId,
+			subject,
+			textBody,
+			htmlBody,
+			fromEmail,
+		} = job.data
+		console.log(job.data)
 
 		// Plan limit check before any processing
 		if (!(await isWithinPlanLimit(userId))) {
@@ -135,16 +168,24 @@ const leadExtractionWorker = new Worker(
 		// ── Gate: lead_extraction workflow must be installed AND active ──────────
 		const orgIdForGates = settings?.organizationId ?? null
 		const leWorkflow = orgIdForGates
-			? await Workflow.findOne({ organizationId: orgIdForGates, type: 'lead_extraction' })
+			? await Workflow.findOne({
+					organizationId: orgIdForGates,
+					type: 'lead_extraction',
+				})
 			: await Workflow.findOne({ userId, type: 'lead_extraction' })
 		if (!leWorkflow || !leWorkflow.isActive) {
-			logger.debug(`Lead extraction skipped — workflow not installed or disabled (user ${userId})`)
+			logger.debug(
+				`Lead extraction skipped — workflow not installed or disabled (user ${userId})`,
+			)
 			return { skipped: 'lead_extraction_disabled' }
 		}
 
 		// ── Gate: spam_filtering workflow must be installed AND active ────────
 		const spamWorkflow = orgIdForGates
-			? await Workflow.findOne({ organizationId: orgIdForGates, type: 'spam_filtering' })
+			? await Workflow.findOne({
+					organizationId: orgIdForGates,
+					type: 'spam_filtering',
+				})
 			: await Workflow.findOne({ userId, type: 'spam_filtering' })
 		if (spamWorkflow?.isActive && isSpam(emailBody, fromEmail, businessType)) {
 			logger.debug(`Spam filtered for user ${userId}: ${subject}`)
@@ -163,11 +204,19 @@ const leadExtractionWorker = new Worker(
 		let confidence = 0
 
 		try {
-			const aiResult = await aiExtract(emailBody, fromEmail, businessType, userId, subject)
+			const aiResult = await aiExtract(
+				emailBody,
+				fromEmail,
+				businessType,
+				userId,
+				subject,
+			)
 
 			// null = Gemini pre-classified as spam, skip entirely
 			if (aiResult === null) {
-				logger.debug(`Gemini: spam email skipped for user ${userId}: ${subject}`)
+				logger.debug(
+					`Gemini: spam email skipped for user ${userId}: ${subject}`,
+				)
 				return { isLead: false, reason: 'spam' }
 			}
 
@@ -188,10 +237,19 @@ const leadExtractionWorker = new Worker(
 		} catch (aiErr) {
 			// Fallback to legacy regex parser
 			logger.warn(`AI extraction failed, using fallback for ${userId}:`, aiErr)
-			const fallback = legacyExtract(subject, textBody, htmlBody, fromEmail, userId, messageId)
+			const fallback = legacyExtract(
+				subject,
+				textBody,
+				htmlBody,
+				fromEmail,
+				userId,
+				messageId,
+			)
 
 			if (!fallback.isLead || fallback.confidence < minConfidence) {
-				logger.debug(`Fallback: not a lead (confidence ${fallback.confidence}): ${subject}`)
+				logger.debug(
+					`Fallback: not a lead (confidence ${fallback.confidence}): ${subject}`,
+				)
 				return { isLead: false, reason: 'low_confidence' }
 			}
 
@@ -208,13 +266,19 @@ const leadExtractionWorker = new Worker(
 		const fp = leadFingerprint(customerEmail, customerPhone, businessType)
 		const existingByFp = await Lead.findOne({ userId, fingerprint: fp })
 		if (existingByFp) {
-			await Lead.updateOne({ _id: existingByFp._id }, { $addToSet: { duplicateEmailIds: messageId } })
+			await Lead.updateOne(
+				{ _id: existingByFp._id },
+				{ $addToSet: { duplicateEmailIds: messageId } },
+			)
 			logger.debug(`Duplicate lead (fingerprint) skipped: ${messageId}`)
 			return { isLead: true, duplicate: true }
 		}
 
 		// Also check by rawEmailId for exact-match dedup
-		const existingByEmail = await Lead.findOne({ userId, rawEmailId: messageId })
+		const existingByEmail = await Lead.findOne({
+			userId,
+			rawEmailId: messageId,
+		})
 		if (existingByEmail) {
 			logger.debug(`Duplicate lead (emailId) skipped: ${messageId}`)
 			return { isLead: true, duplicate: true }
@@ -249,7 +313,8 @@ const leadExtractionWorker = new Worker(
 			? await Workflow.find({ organizationId: orgIdForGates, isActive: true })
 			: await Workflow.find({ userId, isActive: true })
 
-		const hasActiveWorkflow = (type: string) => activeWorkflows.some((w) => w.type === type)
+		const hasActiveWorkflow = (type: string) =>
+			activeWorkflows.some((w) => w.type === type)
 
 		// ── Gate: notification workflow must be installed AND active ──────────
 		if (hasActiveWorkflow('notification')) {
@@ -265,9 +330,12 @@ const leadExtractionWorker = new Worker(
 		// ── Gate: auto_reply workflow must be installed AND active ────────────
 		// Legacy settings.autoReply fallback is intentionally removed. The workflow
 		// record is the single source of truth.
-		const autoReplyWorkflow = activeWorkflows.find((w) => w.type === 'auto_reply')
+		const autoReplyWorkflow = activeWorkflows.find(
+			(w) => w.type === 'auto_reply',
+		)
 		if (autoReplyWorkflow && customerEmail) {
-			const templateId = autoReplyWorkflow.config?.templateId?.toString() ?? null
+			const templateId =
+				autoReplyWorkflow.config?.templateId?.toString() ?? null
 			await autoReplyQueue.add('send-auto-reply', {
 				leadId: lead._id,
 				userId,
@@ -306,13 +374,20 @@ const autoReplyWorker = new Worker(
 			Settings.findOne({ userId }),
 		])
 
-		if (!lead || !gmailConnection) throw new Error('Lead or Gmail connection not found')
+		if (!lead || !gmailConnection)
+			throw new Error('Lead or Gmail connection not found')
 		if (lead.autoReplySent) {
 			logger.debug(`Auto-reply already sent for lead ${leadId}`)
 			return { skipped: true }
 		}
 
-		const result = await sendAutoReply(lead, gmailConnection, settings || undefined, userId, templateId || null)
+		const result = await sendAutoReply(
+			lead,
+			gmailConnection,
+			settings || undefined,
+			userId,
+			templateId || null,
+		)
 
 		if (result.success) {
 			const emailLog = await EmailLog.create({
@@ -344,7 +419,9 @@ const autoReplyWorker = new Worker(
 				String(lead._id),
 			)
 		} else {
-			logger.error(`Failed to send auto-reply for lead ${leadId}: ${result.error}`)
+			logger.error(
+				`Failed to send auto-reply for lead ${leadId}: ${result.error}`,
+			)
 			throw new Error(result.error)
 		}
 
@@ -371,7 +448,10 @@ const n8nTriggerWorker = new Worker(
 		let payload: Record<string, unknown>
 
 		if (workflow.type === 'auto_reply') {
-			const gmailConnection = await GmailConnection.findOne({ userId, isActive: true })
+			const gmailConnection = await GmailConnection.findOne({
+				userId,
+				isActive: true,
+			})
 			const autoReplyPayload = await buildAutoReplyPayload(
 				lead as never,
 				{ ...workflow.config, workflowId: workflow._id.toString() },
@@ -386,7 +466,8 @@ const n8nTriggerWorker = new Worker(
 				customerName: lead.customerName,
 				customerEmail: lead.customerEmail,
 				customerPhone: lead.customerPhone,
-				businessType: (lead as unknown as { businessType?: string }).businessType,
+				businessType: (lead as unknown as { businessType?: string })
+					.businessType,
 				aiScore: (lead as unknown as { aiScore?: number }).aiScore,
 				sentiment: (lead as unknown as { sentiment?: string }).sentiment,
 				status: lead.status,
@@ -398,8 +479,14 @@ const n8nTriggerWorker = new Worker(
 		const result = await triggerWebhook(webhookUrl, payload)
 
 		if (result.success) {
-			await Lead.findByIdAndUpdate(leadId, { n8nTriggered: true, n8nTriggeredAt: new Date() })
-			await Workflow.findByIdAndUpdate(workflowId, { $inc: { triggerCount: 1 }, lastTriggered: new Date() })
+			await Lead.findByIdAndUpdate(leadId, {
+				n8nTriggered: true,
+				n8nTriggeredAt: new Date(),
+			})
+			await Workflow.findByIdAndUpdate(workflowId, {
+				$inc: { triggerCount: 1 },
+				lastTriggered: new Date(),
+			})
 			await createNotification(
 				userId,
 				'workflow_triggered',
@@ -416,14 +503,26 @@ const n8nTriggerWorker = new Worker(
 
 // ─── Error handlers ───────────────────────────────────────────────────────────
 
-;[emailProcessingWorker, leadExtractionWorker, autoReplyWorker, n8nTriggerWorker].forEach((worker) => {
-	worker.on('failed', (job, err) => logger.error(`Job ${job?.id} in ${worker.name} failed:`, err))
-	worker.on('completed', (job) => logger.debug(`Job ${job.id} in ${worker.name} completed`))
+;[
+	emailProcessingWorker,
+	leadExtractionWorker,
+	autoReplyWorker,
+	n8nTriggerWorker,
+].forEach((worker) => {
+	worker.on('failed', (job, err) =>
+		logger.error(`Job ${job?.id} in ${worker.name} failed:`, err),
+	)
+	worker.on('completed', (job) =>
+		logger.debug(`Job ${job.id} in ${worker.name} completed`),
+	)
 })
 
 // ─── Public helpers ───────────────────────────────────────────────────────────
 
-export const addEmailProcessingJob = async (userId: string, gmailConnectionId: string) =>
+export const addEmailProcessingJob = async (
+	userId: string,
+	gmailConnectionId: string,
+) =>
 	emailProcessingQueue.add(
 		'process-emails',
 		{ userId, gmailConnectionId },
@@ -437,7 +536,19 @@ export const getQueueStats = async () => {
 		autoReplyQueue.getJobCounts(),
 		n8nTriggerQueue.getJobCounts(),
 	])
-	return { emailProcessing: emailStats, leadExtraction: leadStats, autoReply: replyStats, n8nTrigger: n8nStats }
+	return {
+		emailProcessing: emailStats,
+		leadExtraction: leadStats,
+		autoReply: replyStats,
+		n8nTrigger: n8nStats,
+	}
 }
 
-export default { emailProcessingQueue, leadExtractionQueue, autoReplyQueue, n8nTriggerQueue, addEmailProcessingJob, getQueueStats }
+export default {
+	emailProcessingQueue,
+	leadExtractionQueue,
+	autoReplyQueue,
+	n8nTriggerQueue,
+	addEmailProcessingJob,
+	getQueueStats,
+}

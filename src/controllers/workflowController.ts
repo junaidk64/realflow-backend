@@ -374,7 +374,7 @@ export const assignTemplate = async (
 		const workflow = await Workflow.findOne({
 			_id: id,
 			organizationId: req.user!.organizationId,
-			type: 'auto_reply',
+			// type: 'auto_reply',
 		})
 
 		if (!workflow) {
