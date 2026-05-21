@@ -6,6 +6,7 @@ import {
 	getCatalogue,
 	getWorkflowExecutions,
 	getWorkflows,
+	getWorkflowTemplates,
 	installWorkflow,
 	toggleWorkflow,
 	updateWorkflow,
@@ -32,6 +33,7 @@ router.post('/', createWorkflow)
 router.patch('/:id', updateWorkflow)
 router.delete('/:id', deleteWorkflow)
 router.post('/:id/toggle', toggleWorkflow)
+router.get('/templates', getWorkflowTemplates) // Install a workflow from a template
 router.patch('/:id/template', assignTemplate)
 router.get('/:id/executions', getWorkflowExecutions)
 

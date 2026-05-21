@@ -1,16 +1,17 @@
 import { NextFunction, Request, Response } from 'express'
-import { Workflow } from '../models/Workflow'
 import {
 	BACKEND_MANAGED_TYPES,
 	SINGLETON_TYPES,
 	WORKFLOW_CATALOGUE,
 	getCatalogueItem,
 } from '../config/workflowCatalogue'
+import { Workflow } from '../models/Workflow'
 import {
 	activateWorkflow,
 	createWorkflow as createN8nWorkflow,
 	deactivateWorkflow,
 	deleteWorkflow as deleteN8nWorkflow,
+	getDefaultWorkflowTemplates,
 	getWorkflowExecutions as getN8nWorkflowExecutions,
 } from '../services/n8nService'
 import logger from '../utils/logger'
@@ -67,7 +68,9 @@ export const installWorkflow = async (
 
 		const def = getCatalogueItem(type)
 		if (!def) {
-			res.status(400).json({ success: false, message: `Unknown workflow type: ${type}` })
+			res
+				.status(400)
+				.json({ success: false, message: `Unknown workflow type: ${type}` })
 			return
 		}
 
@@ -111,7 +114,9 @@ export const getWorkflows = async (
 	next: NextFunction,
 ): Promise<void> => {
 	try {
-		const workflows = await Workflow.find({ organizationId: req.user!.organizationId }).sort({
+		const workflows = await Workflow.find({
+			organizationId: req.user!.organizationId,
+		}).sort({
 			createdAt: -1,
 		})
 		res.json({ success: true, data: { workflows } })
@@ -132,7 +137,13 @@ export const createWorkflow = async (
 	next: NextFunction,
 ): Promise<void> => {
 	try {
-		const { name, description, webhookUrl, config: wfConfig, n8nWorkflowJson } = req.body
+		const {
+			name,
+			description,
+			webhookUrl,
+			config: wfConfig,
+			n8nWorkflowJson,
+		} = req.body
 
 		// Prevent creating backend-managed types via the general endpoint
 		const requestedType = req.body.type || 'custom'
@@ -182,9 +193,18 @@ export const updateWorkflow = async (
 ): Promise<void> => {
 	try {
 		const { id } = req.params
-		const { name, description, webhookUrl, isActive, config: wfConfig } = req.body
+		const {
+			name,
+			description,
+			webhookUrl,
+			isActive,
+			config: wfConfig,
+		} = req.body
 
-		const workflow = await Workflow.findOne({ _id: id, organizationId: req.user!.organizationId })
+		const workflow = await Workflow.findOne({
+			_id: id,
+			organizationId: req.user!.organizationId,
+		})
 
 		if (!workflow) {
 			res.status(404).json({ success: false, message: 'Workflow not found' })
@@ -200,7 +220,8 @@ export const updateWorkflow = async (
 		) {
 			res.status(400).json({
 				success: false,
-				message: 'Please select an email template before enabling this workflow.',
+				message:
+					'Please select an email template before enabling this workflow.',
 			})
 			return
 		}
@@ -244,7 +265,10 @@ export const deleteWorkflow = async (
 			try {
 				await deleteN8nWorkflow(workflow.n8nWorkflowId)
 			} catch (n8nError) {
-				logger.warn(`Failed to delete n8n workflow ${workflow.n8nWorkflowId}:`, n8nError)
+				logger.warn(
+					`Failed to delete n8n workflow ${workflow.n8nWorkflowId}:`,
+					n8nError,
+				)
 			}
 		}
 
@@ -277,10 +301,15 @@ export const toggleWorkflow = async (
 		const newState = !workflow.isActive
 
 		// Block enabling auto_reply without a template
-		if (newState && workflow.needsEmailTemplate && !workflow.config?.templateId) {
+		if (
+			newState &&
+			workflow.needsEmailTemplate &&
+			!workflow.config?.templateId
+		) {
 			res.status(400).json({
 				success: false,
-				message: 'Please select an email template before enabling this workflow.',
+				message:
+					'Please select an email template before enabling this workflow.',
 			})
 			return
 		}
@@ -306,6 +335,18 @@ export const toggleWorkflow = async (
 		next(error)
 	}
 }
+export const getWorkflowTemplates = async (
+	_req: Request,
+	res: Response,
+	next: NextFunction,
+): Promise<void> => {
+	try {
+		const templates = getDefaultWorkflowTemplates()
+		res.json({ success: true, data: { templates } })
+	} catch (error) {
+		next(error)
+	}
+}
 
 // ─── Assign template to auto_reply workflow ───────────────────────────────────
 
@@ -324,7 +365,9 @@ export const assignTemplate = async (
 		const { templateId, subject } = req.body
 
 		if (!templateId) {
-			res.status(400).json({ success: false, message: 'templateId is required' })
+			res
+				.status(400)
+				.json({ success: false, message: 'templateId is required' })
 			return
 		}
 
@@ -335,7 +378,9 @@ export const assignTemplate = async (
 		})
 
 		if (!workflow) {
-			res.status(404).json({ success: false, message: 'Auto reply workflow not found' })
+			res
+				.status(404)
+				.json({ success: false, message: 'Auto reply workflow not found' })
 			return
 		}
 
