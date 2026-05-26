@@ -1,8 +1,8 @@
 import { NextFunction, Request, Response } from 'express'
 import { GmailConnection } from '../models/GmailConnection'
 import { Lead } from '../models/Lead'
-import { Workflow } from '../models/Workflow'
 import { WebhookLog } from '../models/WebhookLog'
+import { Workflow } from '../models/Workflow'
 import { addEmailProcessingJob } from '../services/queueService'
 import logger from '../utils/logger'
 
@@ -13,7 +13,7 @@ export const handleGmailWebhook = async (
 ): Promise<void> => {
 	try {
 		const body = req.body
-
+		console.log('Received Gmail webhook:', JSON.stringify(body))
 		const webhookLog = await WebhookLog.create({
 			type: 'gmail_push',
 			payload: body,
@@ -176,7 +176,9 @@ export const handleN8nCallback = async (
 		await Promise.all(updates)
 
 		if (error) {
-			logger.warn(`n8n callback error (lead=${leadId}, event=${eventType}): ${error}`)
+			logger.warn(
+				`n8n callback error (lead=${leadId}, event=${eventType}): ${error}`,
+			)
 		}
 
 		res.json({ success: true })
@@ -185,4 +187,9 @@ export const handleN8nCallback = async (
 	}
 }
 
-export default { handleGmailWebhook, handleN8nWebhook, handleN8nCallback, getWebhookLogs }
+export default {
+	handleGmailWebhook,
+	handleN8nWebhook,
+	handleN8nCallback,
+	getWebhookLogs,
+}

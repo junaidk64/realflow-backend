@@ -18,8 +18,8 @@ export const LEAD_PROFILES: Record<BusinessType, LeadProfile> = {
     spamKeywords: ['unsubscribe', 'invoice', 'newsletter', 'receipt'],
   },
   insurance: {
-    description: 'Insurance broker or provider',
-    fields: ['policyType', 'coverageAmount', 'renewalDate', 'currentProvider', 'vehicleCount'],
+    description: 'Insurance broker or provider — covers home insurance (property type, bedrooms, current/new address, coverage types, moving date), car insurance (vehicle details, NCB, renewal date), life, health, and other policy types',
+    fields: ['insuranceType', 'propertyType', 'bedrooms', 'coverageTypes', 'currentAddress', 'newAddress', 'movingDate', 'vehicleDetails', 'renewalDate', 'currentProvider'],
     spamKeywords: ['unsubscribe', 'invoice', 'newsletter'],
   },
   cleaning: {

@@ -10,6 +10,9 @@ import { Settings } from '../models/Settings'
 import { User } from '../models/User'
 import { Workflow } from '../models/Workflow'
 import logger from '../utils/logger'
+// Two extractors with the same domain name but very different internals:
+// - aiExtract: Gemini spam pre-filter → Claude Haiku structured extraction (async, can throw)
+// - legacyExtract: pure regex fallback used only when aiExtract throws (sync, never throws)
 import { extractLeadFromEmail as aiExtract } from './aiService'
 import { buildAutoReplyPayload, sendAutoReply } from './emailService'
 import { processNewEmails } from './gmailService'
@@ -100,6 +103,7 @@ const emailProcessingWorker = new Worker(
 
 		const gmailConnection = await GmailConnection.findById(gmailConnectionId)
 		if (!gmailConnection || !gmailConnection.isActive) {
+			logger.error(`Gmail connection not found or inactive for user ${userId}`)
 			throw new Error('Gmail connection not found or inactive')
 		}
 
@@ -107,6 +111,42 @@ const emailProcessingWorker = new Worker(
 		logger.info(`Found ${messages.length} new emails for user ${userId}`)
 
 		for (const message of messages) {
+			// Duplicate check: look for an existing EmailLog.
+			// status='pending' means a previous run created the log but queue.add failed —
+			// re-queue it now. status='delivered' means it was successfully queued before — skip.
+			const existingLog = await EmailLog.findOne({
+				userId,
+				gmailMessageId: message.id,
+				type: 'incoming',
+			})
+			if (existingLog) {
+				if (existingLog.status === 'delivered') {
+					logger.debug(`Email ${message.id} already queued for extraction, skipping`)
+					continue
+				}
+				// status='pending': queue.add failed on a previous attempt — retry
+				logger.warn(
+					`Email ${message.id} has EmailLog but was never queued — re-queuing now`,
+				)
+				await leadExtractionQueue.add('extract-lead', {
+					userId,
+					gmailConnectionId,
+					emailLogId: existingLog._id,
+					messageId: message.id,
+					subject: existingLog.subject,
+					textBody: existingLog.body,
+					htmlBody: existingLog.htmlBody,
+					fromEmail: existingLog.from,
+				})
+				await EmailLog.findByIdAndUpdate(existingLog._id, {
+					status: 'delivered',
+				})
+				continue
+			}
+
+			// New email — create log with 'pending' first, update to 'delivered' only
+			// after queue.add succeeds. This keeps them atomic: if queue.add fails and
+			// the worker retries, the 'pending' log above will re-queue correctly.
 			const emailLog = await EmailLog.create({
 				userId,
 				type: 'incoming',
@@ -116,7 +156,7 @@ const emailProcessingWorker = new Worker(
 				body: message.textBody,
 				htmlBody: message.htmlBody,
 				gmailMessageId: message.id,
-				status: 'delivered',
+				status: 'pending',
 				sentAt: message.date,
 			})
 
@@ -130,6 +170,8 @@ const emailProcessingWorker = new Worker(
 				htmlBody: message.htmlBody,
 				fromEmail: message.fromEmail,
 			})
+
+			await EmailLog.findByIdAndUpdate(emailLog._id, { status: 'delivered' })
 		}
 
 		return { processed: messages.length }
@@ -152,7 +194,7 @@ const leadExtractionWorker = new Worker(
 			htmlBody,
 			fromEmail,
 		} = job.data
-		console.log(job.data)
+		console.log('this is job data in the lead extraction worker:', job.data)
 
 		// Plan limit check before any processing
 		if (!(await isWithinPlanLimit(userId))) {
@@ -166,16 +208,25 @@ const leadExtractionWorker = new Worker(
 		const emailBody = textBody || htmlBody || ''
 
 		// ── Gate: lead_extraction workflow must be installed AND active ──────────
+		// Accepts both the backend-managed 'lead_extraction' type and the template
+		// 'webhook_lead_trigger' type — both represent "lead processing is enabled".
 		const orgIdForGates = settings?.organizationId ?? null
+		console.log(orgIdForGates)
+
 		const leWorkflow = orgIdForGates
 			? await Workflow.findOne({
 					organizationId: orgIdForGates,
-					type: 'lead_extraction',
+					type: { $in: ['lead_extraction', 'webhook_lead_trigger'] },
 				})
-			: await Workflow.findOne({ userId, type: 'lead_extraction' })
+			: await Workflow.findOne({
+					userId,
+					type: { $in: ['lead_extraction', 'webhook_lead_trigger'] },
+				})
+		console.log(leWorkflow)
+
 		if (!leWorkflow || !leWorkflow.isActive) {
-			logger.debug(
-				`Lead extraction skipped — workflow not installed or disabled (user ${userId})`,
+			logger.warn(
+				`Lead extraction skipped — workflow not installed or inactive (user ${userId}, orgId ${orgIdForGates ?? 'none'})`,
 			)
 			return { skipped: 'lead_extraction_disabled' }
 		}
@@ -188,9 +239,15 @@ const leadExtractionWorker = new Worker(
 				})
 			: await Workflow.findOne({ userId, type: 'spam_filtering' })
 		if (spamWorkflow?.isActive && isSpam(emailBody, fromEmail, businessType)) {
-			logger.debug(`Spam filtered for user ${userId}: ${subject}`)
+			logger.warn(
+				`Spam filtered for user ${userId}: ${subject} (from: ${fromEmail})`,
+			)
 			return { isLead: false, reason: 'spam' }
 		}
+
+		logger.info(
+			`Running AI extraction for user ${userId}: "${subject}" from ${fromEmail}`,
+		)
 
 		// AI extraction (primary) with legacy regex as fallback
 		let customerName = ''
@@ -203,6 +260,7 @@ const leadExtractionWorker = new Worker(
 		let isLead = false
 		let confidence = 0
 
+		// Primary path: AI extraction. Falls back to regex below if this throws.
 		try {
 			const aiResult = await aiExtract(
 				emailBody,
@@ -214,14 +272,16 @@ const leadExtractionWorker = new Worker(
 
 			// null = Gemini pre-classified as spam, skip entirely
 			if (aiResult === null) {
-				logger.debug(
-					`Gemini: spam email skipped for user ${userId}: ${subject}`,
+				logger.warn(
+					`Gemini classified as spam — skipped (user ${userId}): "${subject}" from ${fromEmail}`,
 				)
 				return { isLead: false, reason: 'spam' }
 			}
 
 			if (!aiResult.isLead) {
-				logger.debug(`AI: not a lead for user ${userId}: ${subject}`)
+				logger.info(
+					`AI: not a lead for user ${userId}: "${subject}" from ${fromEmail}`,
+				)
 				return { isLead: false, reason: 'not_a_lead' }
 			}
 
@@ -235,7 +295,7 @@ const leadExtractionWorker = new Worker(
 			sentiment = aiResult.sentiment
 			confidence = aiResult.aiScore * 10
 		} catch (aiErr) {
-			// Fallback to legacy regex parser
+			// Fallback path: AI is unavailable (API error/timeout) — regex parser never throws
 			logger.warn(`AI extraction failed, using fallback for ${userId}:`, aiErr)
 			const fallback = legacyExtract(
 				subject,
@@ -270,7 +330,7 @@ const leadExtractionWorker = new Worker(
 				{ _id: existingByFp._id },
 				{ $addToSet: { duplicateEmailIds: messageId } },
 			)
-			logger.debug(`Duplicate lead (fingerprint) skipped: ${messageId}`)
+			logger.warn(`Duplicate lead (fingerprint) skipped: ${messageId}`)
 			return { isLead: true, duplicate: true }
 		}
 
@@ -280,12 +340,13 @@ const leadExtractionWorker = new Worker(
 			rawEmailId: messageId,
 		})
 		if (existingByEmail) {
-			logger.debug(`Duplicate lead (emailId) skipped: ${messageId}`)
+			logger.warn(`Duplicate lead (emailId) skipped: ${messageId}`)
 			return { isLead: true, duplicate: true }
 		}
 
 		const lead = await Lead.create({
 			userId,
+			organizationId: orgIdForGates,
 			source: 'email',
 			rawEmailId: messageId,
 			rawEmailSubject: subject,
@@ -317,7 +378,13 @@ const leadExtractionWorker = new Worker(
 			activeWorkflows.some((w) => w.type === type)
 
 		// ── Gate: notification workflow must be installed AND active ──────────
-		if (hasActiveWorkflow('notification')) {
+		// Also fires when 'slack_notification' or 'webhook_lead_trigger' is active —
+		// all three represent intent to be notified of new leads.
+		if (
+			hasActiveWorkflow('notification') ||
+			hasActiveWorkflow('slack_notification') ||
+			hasActiveWorkflow('webhook_lead_trigger')
+		) {
 			await createNotification(
 				userId,
 				'new_lead',
@@ -331,17 +398,24 @@ const leadExtractionWorker = new Worker(
 		// Legacy settings.autoReply fallback is intentionally removed. The workflow
 		// record is the single source of truth.
 		const autoReplyWorkflow = activeWorkflows.find(
-			(w) => w.type === 'auto_reply',
+			(w) => w.type === 'auto_reply' || w.type === 'webhook_auto_reply',
 		)
 		if (autoReplyWorkflow && customerEmail) {
 			const templateId =
 				autoReplyWorkflow.config?.templateId?.toString() ?? null
+			logger.info(
+				`Queueing send-auto-reply for lead ${lead._id} with workflow ${autoReplyWorkflow.type} and template ${templateId ?? 'none'}`,
+			)
 			await autoReplyQueue.add('send-auto-reply', {
 				leadId: lead._id,
 				userId,
 				gmailConnectionId,
 				templateId,
 			})
+		} else {
+			logger.warn(
+				`Auto-reply | webhook_auto_reply skipped for lead ${lead._id}: workflowFound=${!!autoReplyWorkflow} isActive=${autoReplyWorkflow?.isActive ?? false} hasEmail=${!!customerEmail}`,
+			)
 		}
 
 		// Custom/n8n workflows — skip all backend-managed types to prevent double execution
@@ -374,8 +448,8 @@ const autoReplyWorker = new Worker(
 			Settings.findOne({ userId }),
 		])
 
-		if (!lead || !gmailConnection)
-			throw new Error('Lead or Gmail connection not found')
+		if (!lead) throw new Error('Lead not found')
+		// gmailConnection may be null — sendAutoReply tries SMTP first, Gmail is only the fallback
 		if (lead.autoReplySent) {
 			logger.debug(`Auto-reply already sent for lead ${leadId}`)
 			return { skipped: true }
@@ -394,7 +468,7 @@ const autoReplyWorker = new Worker(
 				userId,
 				leadId: lead._id,
 				type: 'outgoing',
-				from: gmailConnection.email,
+				from: gmailConnection?.email ?? '',
 				to: lead.customerEmail,
 				subject: settings?.autoReplySubject || 'Thank you for your enquiry!',
 				body: result.html || '',
@@ -420,7 +494,7 @@ const autoReplyWorker = new Worker(
 			)
 		} else {
 			logger.error(
-				`Failed to send auto-reply for lead ${leadId}: ${result.error}`,
+				`Failed to send auto-reply | webhook_auto_reply for lead ${leadId}: ${result.error}`,
 			)
 			throw new Error(result.error)
 		}
@@ -447,7 +521,10 @@ const n8nTriggerWorker = new Worker(
 
 		let payload: Record<string, unknown>
 
-		if (workflow.type === 'auto_reply') {
+		if (
+			workflow.type === 'auto_reply' ||
+			workflow.type === 'webhook_auto_reply'
+		) {
 			const gmailConnection = await GmailConnection.findOne({
 				userId,
 				isActive: true,
@@ -461,6 +538,7 @@ const n8nTriggerWorker = new Worker(
 			payload = { ...autoReplyPayload, userId }
 		} else {
 			payload = {
+				isLead: true,
 				userId,
 				leadId,
 				customerName: lead.customerName,
@@ -522,12 +600,15 @@ const n8nTriggerWorker = new Worker(
 export const addEmailProcessingJob = async (
 	userId: string,
 	gmailConnectionId: string,
-) =>
-	emailProcessingQueue.add(
+) => {
+	const job = await emailProcessingQueue.add(
 		'process-emails',
 		{ userId, gmailConnectionId },
 		{ jobId: `process-${userId}-${Date.now()}` },
 	)
+	logger.info(`Email processing job queued for user ${userId}, job ${job.id}`)
+	return job
+}
 
 export const getQueueStats = async () => {
 	const [emailStats, leadStats, replyStats, n8nStats] = await Promise.all([

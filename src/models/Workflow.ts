@@ -14,6 +14,12 @@ export type WorkflowType =
 	| 'notification'
 	| 'spam_filtering'
 	| 'daily_digest'
+	| 'webhook_lead_trigger'
+	| 'webhook_auto_reply'
+	| 'crm_sync'
+	| 'slack_notification'
+	| 'google_sheets'
+	| 'follow_up'
 	| 'custom'
 
 export interface IWorkflow extends Document {
@@ -71,7 +77,20 @@ const WorkflowSchema = new Schema<IWorkflow>(
 		},
 		type: {
 			type: String,
-			enum: ['lead_extraction', 'auto_reply', 'notification', 'spam_filtering', 'daily_digest', 'custom'],
+			enum: [
+				'lead_extraction',
+				'auto_reply',
+				'notification',
+				'spam_filtering',
+				'daily_digest',
+				'webhook_lead_trigger',
+				'webhook_auto_reply',
+				'crm_sync',
+				'slack_notification',
+				'google_sheets',
+				'follow_up',
+				'custom',
+			],
 			default: 'custom',
 		},
 		isActive: {

@@ -285,25 +285,39 @@ export const processNewEmails = async (
 				}
 			} catch (historyError: unknown) {
 				if ((historyError as { code?: number }).code === 404) {
-					// History not found, fall back to listing unread
 					logger.warn(
-						`History not found for ${gmailConnection.email}, falling back to list`,
+						`History not found for ${gmailConnection.email}, falling back to inbox scan`,
 					)
 					messageIds = await listMessages(
 						gmailConnection,
-						10,
-						'in:inbox is:unread newer_than:1d',
+						20,
+						'in:inbox newer_than:7d',
 					)
 				} else {
 					throw historyError
 				}
 			}
+
+			// History advanced past the email (webhook already consumed it, or email
+			// arrived before historyId was set). Supplement with a broader inbox scan
+			// so nothing is silently lost. The emailProcessingWorker deduplicates by
+			// gmailMessageId before creating EmailLog entries.
+			if (messageIds.length === 0) {
+				logger.debug(
+					`History returned 0 for ${gmailConnection.email}, running fallback inbox scan`,
+				)
+				messageIds = await listMessages(
+					gmailConnection,
+					20,
+					'in:inbox newer_than:7d',
+				)
+			}
 		} else {
-			// First sync: get recent unread
+			// First sync: get recent inbox emails (read OR unread)
 			messageIds = await listMessages(
 				gmailConnection,
-				10,
-				'in:inbox is:unread newer_than:1d',
+				20,
+				'in:inbox newer_than:7d',
 			)
 
 			// Set initial historyId

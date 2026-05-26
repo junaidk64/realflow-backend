@@ -5,7 +5,7 @@ import {
 	WORKFLOW_CATALOGUE,
 	getCatalogueItem,
 } from '../config/workflowCatalogue'
-import { Workflow } from '../models/Workflow'
+import { Workflow, WorkflowType } from '../models/Workflow'
 import {
 	activateWorkflow,
 	createWorkflow as createN8nWorkflow,
@@ -348,6 +348,66 @@ export const getWorkflowTemplates = async (
 	}
 }
 
+// ─── Install from n8n template ────────────────────────────────────────────────
+
+/**
+ * POST /api/workflows/install-template/:templateId
+ * Installs an n8n workflow template by its ID. Unlike /install/:type, this
+ * does NOT enforce singleton-per-type — each template install creates an
+ * independent workflow record. The n8n JSON is pushed to n8n if available.
+ */
+export const installWorkflowTemplate = async (
+	req: Request,
+	res: Response,
+	next: NextFunction,
+): Promise<void> => {
+	try {
+		const { templateId } = req.params
+		const userId = req.user!.userId
+		const orgId = req.user!.organizationId
+
+		const templates = getDefaultWorkflowTemplates()
+		const template = templates.find((t) => t.id === templateId)
+
+		if (!template) {
+			res
+				.status(404)
+				.json({ success: false, message: `Template '${templateId}' not found` })
+			return
+		}
+
+		let n8nWorkflowId = ''
+		if (template.json) {
+			try {
+				const n8nWf = await createN8nWorkflow(template.json)
+				n8nWorkflowId = n8nWf.id
+			} catch (n8nError) {
+				logger.warn(`Failed to push template '${templateId}' to n8n:`, n8nError)
+			}
+		}
+
+		const workflow = await Workflow.create({
+			userId,
+			organizationId: orgId,
+			name: template.name,
+			description: template.description,
+			n8nWorkflowId,
+			type: template.type as WorkflowType,
+			needsEmailTemplate:
+				template.type == 'webhook_auto_reply' || template.type == 'auto_reply'
+					? true
+					: false,
+			isActive: false,
+			webhookUrl: '',
+			config: {},
+		})
+
+		res.status(201).json({ success: true, data: { workflow } })
+	} catch (error) {
+		next(error)
+	}
+}
+
 // ─── Assign template to auto_reply workflow ───────────────────────────────────
 
 /**
@@ -432,6 +492,7 @@ export const getWorkflowExecutions = async (
 export default {
 	getCatalogue,
 	installWorkflow,
+	installWorkflowTemplate,
 	getWorkflows,
 	createWorkflow,
 	updateWorkflow,

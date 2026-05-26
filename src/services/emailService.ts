@@ -442,7 +442,7 @@ Our team will follow up personally soon.
 
 export const sendAutoReply = async (
 	lead: Partial<ILead>,
-	gmailConnection: IGmailConnection,
+	gmailConnection: IGmailConnection | null,
 	settings?: Partial<ISettings>,
 	userId?: string,
 	templateId?: string | null,
@@ -535,6 +535,9 @@ export const sendAutoReply = async (
 	}
 
 	// Fallback to Gmail OAuth
+	if (!gmailConnection) {
+		return { success: false, error: 'No email provider configured (no active SMTP and no Gmail connection)' }
+	}
 	try {
 		const auth = await getAuthenticatedClient(gmailConnection)
 		const gmail = google.gmail({ version: 'v1', auth })

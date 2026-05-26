@@ -189,10 +189,11 @@ export const syncEmails = async (
 			return
 		}
 
-		const job = await addEmailProcessingJob(
+		const job: any = await addEmailProcessingJob(
 			req.user!.userId,
 			connection._id.toString(),
 		)
+		console.log('this is job: ', job)
 
 		res.json({
 			success: true,
@@ -285,7 +286,9 @@ export const renewGmailWatch = async (
 
 		const connection = await GmailConnection.findOne({ userId, isActive: true })
 		if (!connection) {
-			res.status(404).json({ success: false, message: 'No active Gmail connection found' })
+			res
+				.status(404)
+				.json({ success: false, message: 'No active Gmail connection found' })
 			return
 		}
 

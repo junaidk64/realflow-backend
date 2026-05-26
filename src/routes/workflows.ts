@@ -8,6 +8,7 @@ import {
 	getWorkflows,
 	getWorkflowTemplates,
 	installWorkflow,
+	installWorkflowTemplate,
 	toggleWorkflow,
 	updateWorkflow,
 } from '../controllers/workflowController'
@@ -33,7 +34,8 @@ router.post('/', createWorkflow)
 router.patch('/:id', updateWorkflow)
 router.delete('/:id', deleteWorkflow)
 router.post('/:id/toggle', toggleWorkflow)
-router.get('/templates', getWorkflowTemplates) // Install a workflow from a template
+router.get('/templates', getWorkflowTemplates)
+router.post('/install-template/:templateId', installWorkflowTemplate)
 router.patch('/:id/template', assignTemplate)
 router.get('/:id/executions', getWorkflowExecutions)
 

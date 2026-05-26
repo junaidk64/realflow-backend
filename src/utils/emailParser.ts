@@ -98,15 +98,15 @@ export const extractLeadDataFromEmail = (
   // ── CMM section-header extraction ─────────────────────────────────────────
   // CMM emails use "Section Header\n\nvalue" (value on next line, no colon)
   if (fullTextLower.includes('comparemymove')) {
-    // Name: first non-empty line after "Contact Details"
+    // Name: first non-empty line after "Contact Details" — strip label prefix if present (e.g. "Name: Junaid Khan")
     const cmmName = rawText.match(/Contact Details[\r\n]+([\w][^\r\n]+)/i);
     if (cmmName?.[1]) {
-      result.customerName = cmmName[1].trim();
+      result.customerName = cmmName[1].trim().replace(/^(?:name|full\s+name)\s*:\s*/i, '');
       confidence += 20;
     }
 
-    // Moving date: first non-empty line after "Moving Date"
-    const cmmDate = rawText.match(/Moving Date[\r\n]+([\w][^\r\n]+)/i);
+    // Moving date: first non-empty line after "Moving Date" (with or without colon)
+    const cmmDate = rawText.match(/Moving Date:?\s*[\r\n]+([\w][^\r\n]+)/i);
     if (cmmDate?.[1]) {
       result.movingDate = cmmDate[1].trim();
       confidence += 15;
@@ -303,7 +303,10 @@ export const extractLeadDataFromEmail = (
   // Moving date (if not found by CMM block)
   if (!result.movingDate) {
     const datePatterns = [
+      // value on same line: "Moving Date: 29th July 2026"
       /(?:moving\s+date|move\s+date|removal\s+date|date\s+of\s+move|preferred\s+date)\s*[:\-]\s*([^\n\r]+)/i,
+      // value on next line: "Moving Date:\n29th July 2026"
+      /(?:moving\s+date|move\s+date|removal\s+date|date\s+of\s+move|preferred\s+date)\s*:?\s*[\r\n]+\s*([^\n\r]+)/i,
       /\b(\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{4})\b/i,
       /\b(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})\b/,
     ];

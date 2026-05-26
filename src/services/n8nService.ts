@@ -178,8 +178,8 @@ export const getDefaultWorkflowTemplates = () => {
 		{
 			id: 'gmail-trigger',
 			name: 'Gmail Lead Trigger',
-			description: 'Triggered when a new lead is extracted from Gmail',
-			type: 'lead_extraction',
+			description: 'Receives a webhook when a new lead is extracted, checks the isLead flag, then forwards the lead data to your team notification endpoint.',
+			type: 'webhook_lead_trigger',
 			json: {
 				name: 'Gmail Lead Trigger',
 				nodes: [
@@ -235,8 +235,8 @@ export const getDefaultWorkflowTemplates = () => {
 		{
 			id: 'auto-reply',
 			name: 'Auto Reply Workflow',
-			description: 'Sends automated reply to leads',
-			type: 'auto_reply',
+			description: 'Sends an immediate automated thank-you reply to a new lead via n8n\'s email node. Fires on webhook — set a webhook URL after installing to activate.',
+			type: 'webhook_auto_reply',
 			json: {
 				name: 'Auto Reply Workflow',
 				nodes: [
@@ -274,8 +274,8 @@ export const getDefaultWorkflowTemplates = () => {
 		{
 			id: 'crm-sync',
 			name: 'CRM Sync',
-			description: 'Syncs leads to your CRM system via HTTP',
-			type: 'notification',
+			description: 'Pushes every new lead to your external CRM via HTTP POST. Replace the placeholder CRM URL in the n8n workflow before activating.',
+			type: 'crm_sync',
 			json: {
 				name: 'CRM Sync Workflow',
 				nodes: [
@@ -313,8 +313,8 @@ export const getDefaultWorkflowTemplates = () => {
 		{
 			id: 'slack-notification',
 			name: 'Slack Lead Alert',
-			description: 'Posts a message to Slack when a new lead arrives',
-			type: 'notification',
+			description: 'Posts a formatted Slack alert to your channel via Incoming Webhook whenever a new lead arrives. Replace the placeholder Slack webhook URL in n8n before activating.',
+			type: 'slack_notification',
 			json: {
 				name: 'Slack Lead Alert',
 				nodes: [
@@ -358,8 +358,8 @@ export const getDefaultWorkflowTemplates = () => {
 		{
 			id: 'google-sheets-log',
 			name: 'Google Sheets Logger',
-			description: 'Logs every lead to a Google Sheet for easy tracking',
-			type: 'custom',
+			description: 'Appends a new row to a Google Sheet for every lead, capturing name, email, phone, status, AI confidence score, and creation date. Replace YOUR_GOOGLE_SHEET_ID in n8n before activating.',
+			type: 'google_sheets',
 			json: {
 				name: 'Google Sheets Logger',
 				nodes: [
@@ -406,9 +406,8 @@ export const getDefaultWorkflowTemplates = () => {
 		{
 			id: 'follow-up-sequence',
 			name: 'Follow-up Sequence',
-			description:
-				'Sends a follow-up email 24 hours after the initial auto-reply',
-			type: 'auto_reply',
+			description: 'Waits 24 hours after initial contact, then sends a personalized follow-up email to re-engage the lead. Designed to run after the auto-reply workflow.',
+			type: 'follow_up',
 			json: {
 				name: 'Follow-up Sequence',
 				nodes: [
