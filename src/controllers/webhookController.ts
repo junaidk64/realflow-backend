@@ -44,7 +44,9 @@ export const handleGmailWebhook = async (
 							processedAt: new Date(),
 						})
 
-						logger.info(`Gmail webhook processed for ${emailAddress}`)
+						logger.info(
+							`Gmail webhook processed for ${emailAddress},  ${JSON.stringify(body)}`,
+						)
 					}
 				}
 			} catch (parseError) {
