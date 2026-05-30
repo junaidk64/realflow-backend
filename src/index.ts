@@ -19,11 +19,11 @@ import emailRoutes from './routes/email'
 import gmailRoutes from './routes/gmail'
 import leadRoutes from './routes/leads'
 import notificationRoutes from './routes/notifications'
-import userRoutes from './routes/users'
+import orgTemplateRoutes from './routes/orgTemplates'
 import settingsRoutes from './routes/settings'
 import smtpRoutes from './routes/smtp'
 import templateRoutes from './routes/templates'
-import orgTemplateRoutes from './routes/orgTemplates'
+import userRoutes from './routes/users'
 import webhookRoutes from './routes/webhooks'
 import workflowRoutes from './routes/workflows'
 
@@ -51,6 +51,7 @@ app.use(
 				'http://localhost:3000',
 				'http://localhost:3001',
 				'https://realflow-frontend-zeta.vercel.app',
+				'https://realflow-frontend-git-flowold-junaid634s-projects.vercel.app',
 			]
 			if (!origin || allowedOrigins.includes(origin)) {
 				callback(null, true)
