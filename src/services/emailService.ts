@@ -284,6 +284,23 @@ function renderSteps(steps: Array<{ title: string; desc: string }>): string {
 		.join('')
 }
 
+function htmlToPlainText(html: string): string {
+	return html
+		.replace(/<\s*br\s*\/?>/gi, '\n')
+		.replace(/<\s*\/p\s*>/gi, '\n\n')
+		.replace(/<[^>]+>/g, ' ')
+		.replace(/&nbsp;/gi, ' ')
+		.replace(/&amp;/gi, '&')
+		.replace(/&lt;/gi, '<')
+		.replace(/&gt;/gi, '>')
+		.replace(/&quot;/gi, '"')
+		.replace(/&#39;/gi, "'")
+		.replace(/\s+\n/g, '\n')
+		.replace(/\n\s+/g, '\n')
+		.replace(/[ \t]{2,}/g, ' ')
+		.trim()
+}
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 export const generateAutoReplyHTML = (
@@ -467,7 +484,11 @@ export const sendAutoReply = async (
 		// Render the org-selected template with lead variables
 		const orgTemplate = await Template.findOne({
 			_id: templateId,
-			isSystemTemplate: false,
+			$or: [
+				{ status: 'approved' },
+				{ userId },
+				{ isSystemTemplate: true },
+			],
 		})
 		if (orgTemplate) {
 			const extraFields =
@@ -583,6 +604,7 @@ export const buildAutoReplyPayload = async (
 	from: string,
 ): Promise<{
 	html: string
+	text: string
 	subject: string
 	to: string
 	from: string
@@ -632,8 +654,11 @@ export const buildAutoReplyPayload = async (
 		html = generateAutoReplyHTML(lead, settings || undefined)
 	}
 
+	const text = htmlToPlainText(html)
+
 	return {
 		html,
+		text,
 		subject,
 		to: lead.customerEmail || '',
 		from,

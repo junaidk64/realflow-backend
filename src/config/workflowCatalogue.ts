@@ -94,10 +94,11 @@ export const WORKFLOW_CATALOGUE: WorkflowCatalogueItem[] = [
 				},
 				{
 					parameters: {
-						fromEmail: '={{$json["fromEmail"]}}',
-						toEmail: '={{$json["customerEmail"]}}',
-						subject: 'Thank you for your enquiry!',
-						text: 'We have received your request and will be in touch shortly.',
+						fromEmail: '={{$json["from"]}}',
+						toEmail: '={{$json["to"]}}',
+						subject: '={{$json["subject"]}}',
+						html: '={{$json["html"]}}',
+						text: '={{$json["text"]}}',
 					},
 					id: 'email-node',
 					name: 'Send Email',
