@@ -786,7 +786,9 @@ export interface SendEmailOptions {
 	to: string
 	subject: string
 	html: string
+	text?: string
 	replyTo?: string
+	replyToMessageId?: string // Gmail message ID for reply threading
 }
 
 export interface SendEmailResult {
@@ -800,7 +802,7 @@ export const sendEmailForUser = async (
 	userId: string,
 	options: SendEmailOptions,
 ): Promise<SendEmailResult> => {
-	const { to, subject, html, replyTo } = options
+	const { to, subject, html, text, replyTo, replyToMessageId } = options
 
 	// Try SMTP first if connected
 	const smtpConn = await SmtpConnection.findOne({ userId, isActive: true })
@@ -823,7 +825,9 @@ export const sendEmailForUser = async (
 				to,
 				subject,
 				html,
+				...(text ? { text } : {}),
 				...(replyTo ? { replyTo } : {}),
+				...(replyToMessageId ? { inReplyTo: replyToMessageId, references: replyToMessageId } : {}),
 			})
 
 			logger.info(`Email sent via SMTP for user ${userId} to ${to}`)
@@ -847,6 +851,21 @@ export const sendEmailForUser = async (
 				? `"${userSettings.businessName}" <${gmailConn.email}>`
 				: gmailConn.email
 
+			// Resolve threadId for reply threading
+			let threadId: string | undefined
+			if (replyToMessageId) {
+				try {
+					const original = await gmail.users.messages.get({
+						userId: 'me',
+						id: replyToMessageId,
+						format: 'minimal',
+					})
+					threadId = original.data.threadId || undefined
+				} catch {
+					// not fatal — send as new thread if lookup fails
+				}
+			}
+
 			const headers = [
 				`From: ${gmailFrom}`,
 				`To: ${to}`,
@@ -855,12 +874,16 @@ export const sendEmailForUser = async (
 				`MIME-Version: 1.0`,
 			]
 			if (replyTo) headers.push(`Reply-To: ${replyTo}`)
+			if (replyToMessageId) {
+				headers.push(`In-Reply-To: ${replyToMessageId}`)
+				headers.push(`References: ${replyToMessageId}`)
+			}
 			headers.push('', html)
 
 			const encoded = Buffer.from(headers.join('\n')).toString('base64url')
 			const resp = await gmail.users.messages.send({
 				userId: 'me',
-				requestBody: { raw: encoded },
+				requestBody: { raw: encoded, ...(threadId ? { threadId } : {}) },
 			})
 
 			logger.info(`Email sent via Gmail for user ${userId} to ${to}`)

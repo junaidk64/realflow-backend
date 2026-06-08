@@ -7,6 +7,7 @@ import {
 	getLead,
 	getLeads,
 	getLeadStats,
+	sendLeadEmail,
 	testClassifyEmail,
 	updateLead,
 } from '../controllers/leadController'
@@ -26,6 +27,7 @@ router.get('/', apiLimiter, getLeads)
 router.get('/stats', apiLimiter, getLeadStats)
 router.get('/export', exportLeads)
 router.get('/:id', getLead)
+router.post('/:id/send-email', apiLimiter, sendLeadEmail)
 router.patch('/:id', updateLead)
 router.delete('/:id', deleteLead)
 

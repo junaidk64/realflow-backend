@@ -2,7 +2,9 @@ import { NextFunction, Request, Response } from 'express'
 import mongoose from 'mongoose'
 import { EmailLog } from '../models/EmailLog'
 import { GmailConnection } from '../models/GmailConnection'
+import { SmtpConnection } from '../models/SmtpConnection'
 import { Lead } from '../models/Lead'
+import { sendEmailForUser } from '../services/emailService'
 import { leadExtractionQueue } from '../services/queueService'
 import logger from '../utils/logger'
 
@@ -110,8 +112,8 @@ export const getLead = async (
 		}
 
 		const emails = await EmailLog.find({ leadId: id })
-			.sort({ createdAt: -1 })
-			.limit(20)
+			.sort({ createdAt: 1 })
+			.lean()
 
 		res.json({ success: true, data: { lead, emails } })
 	} catch (error) {
@@ -464,6 +466,103 @@ export const testClassifyEmail = async (
 	}
 }
 
+export const sendLeadEmail = async (
+	req: Request,
+	res: Response,
+	next: NextFunction,
+): Promise<void> => {
+	try {
+		const { id } = req.params
+		if (!mongoose.isValidObjectId(id)) {
+			res.status(400).json({ success: false, message: 'Invalid lead ID' })
+			return
+		}
+
+		const { to, subject, body, htmlBody, replyToMessageId } = req.body as {
+			to?: string
+			subject?: string
+			body?: string
+			htmlBody?: string
+			replyToMessageId?: string
+		}
+
+		if (!to || !subject || !body) {
+			res.status(400).json({
+				success: false,
+				message: 'to, subject, and body are required',
+			})
+			return
+		}
+
+		const userId = req.user!.userId
+
+		const lead = await Lead.findOne({
+			_id: id,
+			organizationId: req.user!.organizationId,
+		})
+		if (!lead) {
+			res.status(404).json({ success: false, message: 'Lead not found' })
+			return
+		}
+
+		const result = await sendEmailForUser(userId, {
+			to,
+			subject,
+			html: htmlBody || `<p>${body}</p>`,
+			text: body,
+			replyToMessageId,
+		})
+
+		if (result.provider === 'none') {
+			res.status(400).json({
+				success: false,
+				message: 'No email provider configured. Connect Gmail or SMTP first.',
+				code: 'NO_EMAIL_PROVIDER',
+			})
+			return
+		}
+
+		if (!result.success) {
+			res.status(500).json({
+				success: false,
+				message: `Failed to send email: ${result.error}`,
+				code: 'EMAIL_SEND_FAILED',
+			})
+			return
+		}
+
+		// Resolve sender address from active provider
+		let fromAddress = ''
+		if (result.provider === 'gmail') {
+			const conn = await GmailConnection.findOne({ userId, isActive: true }).lean()
+			fromAddress = conn?.email || ''
+		} else if (result.provider === 'smtp') {
+			const conn = await SmtpConnection.findOne({ userId, isActive: true }).lean()
+			fromAddress = conn?.fromEmail || ''
+		}
+
+		const now = new Date()
+		const emailLog = await EmailLog.create({
+			userId,
+			leadId: id,
+			type: 'outgoing',
+			from: fromAddress,
+			to,
+			subject,
+			body,
+			htmlBody: htmlBody || '',
+			gmailMessageId: result.messageId || '',
+			status: 'sent',
+			sentAt: now,
+		})
+
+		logger.info(`Outgoing email logged for lead ${id} via ${result.provider}`)
+		res.json({ success: true, data: emailLog })
+	} catch (error) {
+		next(error)
+	}
+}
+
 export default {
 	getLeads,
 	getLead,
@@ -473,4 +572,5 @@ export default {
 	exportLeads,
 	createLeadFromN8n,
 	testClassifyEmail,
+	sendLeadEmail,
 }
