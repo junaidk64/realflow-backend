@@ -75,8 +75,16 @@ export const WORKFLOW_CATALOGUE: WorkflowCatalogueItem[] = [
 		id: 'auto-reply',
 		name: 'Auto Reply Workflow',
 		description:
-			"Sends an immediate automated thank-you reply to a new lead via n8n's email node. Fires on webhook — set a webhook URL after installing to activate.",
+			"Sends an immediate automated thank-you reply to a new lead. Choose between AI-generated personalised replies (Claude) or a hand-crafted email template.",
 		type: 'webhook_auto_reply',
+		needsEmailTemplate: true,
+		defaultConfig: {
+			templateId: null,
+			templateName: null,
+			subject: null,
+			fallbackToGlobal: true,
+			useAiReply: false,
+		},
 		json: {
 			name: 'Auto Reply Workflow',
 			nodes: [

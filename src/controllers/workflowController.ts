@@ -211,17 +211,19 @@ export const updateWorkflow = async (
 			return
 		}
 
-		// Validate template is selected before allowing auto_reply activation
+		// Validate template is selected before allowing auto_reply activation — unless AI reply mode is on
+		const incomingUseAiReply = wfConfig?.useAiReply ?? workflow.config?.useAiReply
 		if (
 			isActive === true &&
 			workflow.needsEmailTemplate &&
+			!incomingUseAiReply &&
 			!wfConfig?.templateId &&
 			!workflow.config?.templateId
 		) {
 			res.status(400).json({
 				success: false,
 				message:
-					'Please select an email template before enabling this workflow.',
+					'Please select an email template or enable AI Reply before activating this workflow.',
 			})
 			return
 		}
@@ -300,16 +302,17 @@ export const toggleWorkflow = async (
 
 		const newState = !workflow.isActive
 
-		// Block enabling auto_reply without a template
+		// Block enabling auto_reply without a template — unless AI reply mode is on
 		if (
 			newState &&
 			workflow.needsEmailTemplate &&
+			!workflow.config?.useAiReply &&
 			!workflow.config?.templateId
 		) {
 			res.status(400).json({
 				success: false,
 				message:
-					'Please select an email template before enabling this workflow.',
+					'Please select an email template or enable AI Reply before activating this workflow.',
 			})
 			return
 		}

@@ -8,6 +8,7 @@ import { Template } from '../models/Template'
 import { IWorkflowConfig } from '../models/Workflow'
 import { decrypt } from '../utils/encryption'
 import logger from '../utils/logger'
+import { generateAiAutoReply } from './aiService'
 import { getAuthenticatedClient } from './gmailService'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -301,6 +302,98 @@ function htmlToPlainText(html: string): string {
 		.trim()
 }
 
+// ─── AI reply HTML wrapper ────────────────────────────────────────────────────
+
+function generateAiReplyHTML(
+	body: string,
+	companyName: string,
+	customerName: string | null,
+	emailSignature: string,
+): string {
+	// Convert plain-text line breaks to HTML paragraphs
+	const paragraphs = body
+		.split(/\n{2,}/)
+		.map((chunk) =>
+			chunk
+				.trim()
+				.split('\n')
+				.filter(Boolean)
+				.map(
+					(line) =>
+						`<p style="margin:0 0 12px 0;font-size:15px;color:rgba(255,255,255,0.85);line-height:1.7;">${line}</p>`,
+				)
+				.join(''),
+		)
+		.filter(Boolean)
+		.join('')
+
+	const greeting = customerName
+		? `Hi <strong style="color:#a78bfa;">${customerName}</strong>,`
+		: 'Hello,'
+
+	const signatureBlock = emailSignature
+		? `<tr>
+<td style="padding-top:24px;border-top:1px solid rgba(255,255,255,0.08);">
+<p style="margin:0;font-size:14px;color:rgba(255,255,255,0.55);line-height:1.8;white-space:pre-line;">${emailSignature}</p>
+</td>
+</tr>`
+		: ''
+
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Message from ${companyName}</title>
+</head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:linear-gradient(135deg,#0f0c29 0%,#302b63 50%,#24243e 100%);min-height:100vh;">
+<table width="100%" cellpadding="0" cellspacing="0" style="min-height:100vh;background:linear-gradient(135deg,#0f0c29 0%,#302b63 50%,#24243e 100%);">
+<tr>
+<td align="center" style="padding:40px 20px;">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+
+<tr>
+<td align="center" style="padding-bottom:32px;">
+<div style="display:inline-block;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:16px;padding:16px 32px;">
+<span style="font-size:24px;font-weight:700;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;color:#667eea;letter-spacing:-0.5px;">${companyName}</span>
+</div>
+</td>
+</tr>
+
+<tr>
+<td style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:24px;padding:48px;box-shadow:0 32px 64px rgba(0,0,0,0.4);">
+<table width="100%" cellpadding="0" cellspacing="0">
+
+<tr>
+<td style="padding-bottom:24px;">
+<p style="margin:0 0 16px 0;font-size:15px;color:rgba(255,255,255,0.85);line-height:1.7;">${greeting}</p>
+${paragraphs}
+</td>
+</tr>
+
+${signatureBlock}
+
+</table>
+</td>
+</tr>
+
+<tr>
+<td align="center" style="padding-top:32px;">
+<p style="margin:0;font-size:12px;color:rgba(255,255,255,0.3);line-height:1.6;">
+This is an automated response from ${companyName}.<br>
+Our team will follow up personally soon.
+</p>
+</td>
+</tr>
+
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>`
+}
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 export const generateAutoReplyHTML = (
@@ -463,6 +556,7 @@ export const sendAutoReply = async (
 	settings?: Partial<ISettings>,
 	userId?: string,
 	templateId?: string | null,
+	useAiReply?: boolean,
 ): Promise<{
 	success: boolean
 	messageId?: string
@@ -474,13 +568,34 @@ export const sendAutoReply = async (
 		return { success: false, error: 'No customer email address' }
 	}
 
-	const subject =
+	let subject =
 		settings?.autoReplySubject ||
 		`Thank you for your enquiry - We'll be in touch soon!`
 
 	let htmlContent: string
 
-	if (templateId) {
+	// ── Mode 1: AI-generated reply ────────────────────────────────────────────
+	if (useAiReply) {
+		try {
+			const aiResult = await generateAiAutoReply(lead, settings, userId)
+			subject = aiResult.subject
+			htmlContent = generateAiReplyHTML(
+				aiResult.body,
+				settings?.businessName || 'Our Team',
+				lead.customerName || null,
+				settings?.emailSignature || '',
+			)
+			logger.info(
+				`AI auto-reply generated for lead ${lead._id?.toString() ?? 'unknown'}: "${subject}"`,
+			)
+		} catch (aiErr) {
+			logger.error(
+				`AI auto-reply generation failed for lead ${lead._id?.toString() ?? 'unknown'}, falling back to template: ${(aiErr as Error).message}`,
+			)
+			// Fallback to standard generated HTML so the reply still goes out
+			htmlContent = generateAutoReplyHTML(lead, settings)
+		}
+	} else if (templateId) {
 		// Render the org-selected template with lead variables
 		const orgTemplate = await Template.findOne({
 			_id: templateId,

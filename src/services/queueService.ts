@@ -403,14 +403,16 @@ const leadExtractionWorker = new Worker(
 		if (autoReplyWorkflow && customerEmail) {
 			const templateId =
 				autoReplyWorkflow.config?.templateId?.toString() ?? null
+			const useAiReply = Boolean(autoReplyWorkflow.config?.useAiReply)
 			logger.info(
-				`Queueing send-auto-reply for lead ${lead._id} with workflow ${autoReplyWorkflow.type} and template ${templateId ?? 'none'}`,
+				`Queueing send-auto-reply for lead ${lead._id} with workflow ${autoReplyWorkflow.type}, template ${templateId ?? 'none'}, useAiReply=${useAiReply}`,
 			)
 			await autoReplyQueue.add('send-auto-reply', {
 				leadId: lead._id,
 				userId,
 				gmailConnectionId,
 				templateId,
+				useAiReply,
 			})
 		} else {
 			logger.warn(
@@ -440,7 +442,7 @@ const leadExtractionWorker = new Worker(
 const autoReplyWorker = new Worker(
 	'auto-reply',
 	async (job: Job) => {
-		const { leadId, userId, gmailConnectionId, templateId } = job.data
+		const { leadId, userId, gmailConnectionId, templateId, useAiReply } = job.data
 
 		const [lead, gmailConnection, settings] = await Promise.all([
 			Lead.findById(leadId),
@@ -461,6 +463,7 @@ const autoReplyWorker = new Worker(
 			settings || undefined,
 			userId,
 			templateId || null,
+			Boolean(useAiReply),
 		)
 
 		if (result.success) {

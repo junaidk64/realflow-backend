@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { BusinessType, LEAD_PROFILES } from '../config/leadProfiles'
+import type { ILead } from '../models/Lead'
+import type { ISettings } from '../models/Settings'
 import { UsageLog } from '../models/UsageLog'
 import logger from '../utils/logger'
 import { classifyEmail, summarizeEmailThread } from './geminiService'
@@ -229,6 +231,95 @@ Write a ${tone} reply starting with "${greeting},":`
 		draft: (response.content[0] as { text: string }).text.trim(),
 		model: 'claude-haiku',
 		costUsd,
+	}
+}
+
+// ─── AI Auto-Reply ────────────────────────────────────────────────────────────
+
+const AI_AUTO_REPLY_SYSTEM = `You are a world-class salesperson and human email copywriter crafting immediate auto-reply emails for business leads.
+
+Rules:
+- Sound fully human — warm, confident, and direct. Never robotic.
+- Never use placeholder brackets like [Name] — use the real value or omit it.
+- Avoid clichés: "I hope this email finds you well", "circle back", "moving forward", "per my last email".
+- Body: 3–5 sentences maximum. Concise and personal.
+- Always end with one clear, specific Call-to-Action (e.g. "Reply to this email with your preferred date" or "Call us at [number] to book your free consultation").
+- Match lead sentiment: urgent leads get direct, fast replies; curious enquiries get informative, warm ones.
+- Return ONLY valid JSON with exactly two fields: { "subject": string, "body": string }
+- The body must be plain text with natural line breaks between paragraphs. No HTML tags.`
+
+export interface AiAutoReplyResult {
+	subject: string
+	body: string
+}
+
+export async function generateAiAutoReply(
+	lead: Partial<ILead>,
+	settings?: Partial<ISettings>,
+	userId?: string,
+): Promise<AiAutoReplyResult> {
+	const companyName = settings?.businessName || 'Our Team'
+	const businessType = lead.businessType || 'general'
+
+	const contextLines: string[] = []
+	if (lead.customerName) contextLines.push(`Customer name: ${lead.customerName}`)
+	if (lead.customerEmail) contextLines.push(`Customer email: ${lead.customerEmail}`)
+	if (lead.customerPhone) contextLines.push(`Phone: ${lead.customerPhone}`)
+	if (lead.rawEmailSubject) contextLines.push(`Original enquiry subject: ${lead.rawEmailSubject}`)
+	if (lead.fromAddress) contextLines.push(`Moving from: ${lead.fromAddress}`)
+	if (lead.toAddress) contextLines.push(`Moving to: ${lead.toAddress}`)
+	if (lead.movingDate) contextLines.push(`Moving date: ${lead.movingDate}`)
+	if (lead.services?.length) contextLines.push(`Services requested: ${lead.services.join(', ')}`)
+	if (lead.sentiment) contextLines.push(`Lead sentiment: ${lead.sentiment}`)
+	if (lead.aiScore != null) contextLines.push(`Lead quality score: ${lead.aiScore}/10`)
+	if (lead.aiScoreReason) contextLines.push(`Score reason: ${lead.aiScoreReason}`)
+
+	const extraFields =
+		lead.extraFields instanceof Map
+			? Object.fromEntries(lead.extraFields)
+			: ((lead.extraFields as unknown as Record<string, unknown>) ?? {})
+	for (const [k, v] of Object.entries(extraFields)) {
+		if (v) contextLines.push(`${k}: ${String(v)}`)
+	}
+
+	const userPrompt = `Company: ${companyName} (${businessType} business)
+${contextLines.join('\n')}
+
+Write a personal, immediate auto-reply email from ${companyName} to this lead.
+Return JSON only: { "subject": "...", "body": "..." }`
+
+	const response = await client.messages.create({
+		model: 'claude-haiku-4-5-20251001',
+		max_tokens: 400,
+		system: [
+			{
+				type: 'text',
+				text: AI_AUTO_REPLY_SYSTEM,
+				cache_control: { type: 'ephemeral' },
+			} as Anthropic.TextBlockParam & { cache_control: { type: string } },
+		],
+		messages: [{ role: 'user', content: userPrompt }],
+	})
+
+	if (userId) {
+		logUsage(
+			userId,
+			response.usage as Anthropic.Usage & { cache_read_input_tokens?: number | null },
+		).catch(() => {})
+	}
+
+	const raw = (response.content[0] as { type: string; text: string }).text.trim()
+	const jsonStr = raw.replace(/^```json?\n?/, '').replace(/\n?```$/, '')
+
+	try {
+		return JSON.parse(jsonStr) as AiAutoReplyResult
+	} catch {
+		// Fallback: treat the whole text as the body if JSON parse fails
+		logger.warn('generateAiAutoReply: JSON parse failed, using raw text as body')
+		return {
+			subject: `Thank you for your enquiry — ${companyName}`,
+			body: raw,
+		}
 	}
 }
 

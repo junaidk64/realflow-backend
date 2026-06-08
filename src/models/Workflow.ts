@@ -5,6 +5,7 @@ export interface IWorkflowConfig {
 	templateName: string | null
 	subject: string | null
 	fallbackToGlobal: boolean
+	useAiReply: boolean
 	[key: string]: unknown
 }
 
@@ -45,6 +46,7 @@ const WorkflowConfigSchema = new Schema<IWorkflowConfig>(
 		templateName: { type: String, default: null },
 		subject: { type: String, default: null },
 		fallbackToGlobal: { type: Boolean, default: true },
+		useAiReply: { type: Boolean, default: false },
 	},
 	{ _id: false, strict: false },
 )
