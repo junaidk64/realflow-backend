@@ -302,6 +302,27 @@ export const WORKFLOW_CATALOGUE: WorkflowCatalogueItem[] = [
 			},
 		},
 	},
+	// ── WhatsApp workflows ────────────────────────────────────────────────────────
+	{
+		type: 'whatsapp_auto_reply',
+		name: 'WhatsApp Auto Reply',
+		description:
+			'Automatically reply to incoming WhatsApp messages with a text message. Activate after connecting your WhatsApp Business account.',
+		needsEmailTemplate: false,
+		backendManaged: true,
+		defaultConfig: {
+			whatsappReplyText: 'Thank you for your message! We will get back to you shortly.',
+		},
+	},
+	{
+		type: 'whatsapp_lead_trigger',
+		name: 'WhatsApp Lead Trigger',
+		description:
+			'Fires a notification and in-app alert whenever a new lead is created from an incoming WhatsApp message.',
+		needsEmailTemplate: false,
+		backendManaged: true,
+		defaultConfig: {},
+	},
 ]
 
 // Set of all catalogue types that the backend manages natively (no n8n required)

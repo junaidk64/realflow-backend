@@ -1,7 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
 export type LeadStatus = 'new' | 'contacted' | 'quoted' | 'won' | 'lost'
-export type LeadSource = 'email' | 'manual' | 'webhook'
+export type LeadSource = 'email' | 'manual' | 'webhook' | 'whatsapp'
 export type BusinessType =
 	| 'moving'
 	| 'real_estate'
@@ -62,7 +62,7 @@ const LeadSchema = new Schema<ILead>(
 		},
 		source: {
 			type: String,
-			enum: ['email', 'manual', 'webhook'],
+			enum: ['email', 'manual', 'webhook', 'whatsapp'],
 			default: 'email',
 		},
 		rawEmailId: {
