@@ -2,7 +2,13 @@ import mongoose, { Document, Schema } from 'mongoose'
 
 export type LeadStatus = 'new' | 'contacted' | 'quoted' | 'won' | 'lost'
 export type LeadSource = 'email' | 'manual' | 'webhook'
-export type BusinessType = 'moving' | 'real_estate' | 'insurance' | 'cleaning' | 'legal' | 'general'
+export type BusinessType =
+	| 'moving'
+	| 'real_estate'
+	| 'insurance'
+	| 'cleaning'
+	| 'legal'
+	| 'general'
 export type LeadSentiment = 'positive' | 'neutral' | 'negative' | 'urgent'
 
 export interface ILead extends Document {
@@ -141,7 +147,14 @@ const LeadSchema = new Schema<ILead>(
 		},
 		businessType: {
 			type: String,
-			enum: ['moving', 'real_estate', 'insurance', 'cleaning', 'legal', 'general'],
+			enum: [
+				'moving',
+				'real_estate',
+				'insurance',
+				'cleaning',
+				'legal',
+				'general',
+			],
 			default: 'general',
 		},
 		extraFields: {

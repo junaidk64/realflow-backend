@@ -120,6 +120,7 @@ export const generateTokenPair = (user: IUser): TokenPair => {
 		userId: user._id,
 		email: user.email,
 		role: user.role,
+		organizationId: user.organizationId,
 	}
 
 	const accessToken = jwt.sign(payload, config.jwt.secret, {

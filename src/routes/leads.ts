@@ -1,6 +1,7 @@
 import type { Router } from 'express'
 import { Router as createRouter } from 'express'
 import {
+	createLead,
 	createLeadFromN8n,
 	deleteLead,
 	exportLeads,
@@ -24,6 +25,7 @@ router.use(verifyToken)
 
 router.post('/test-classify', apiLimiter, testClassifyEmail)
 router.get('/', apiLimiter, getLeads)
+router.post('/manual', apiLimiter, createLead) // Moved createLead route here to avoid conflict with n8n webhook route
 router.get('/stats', apiLimiter, getLeadStats)
 router.get('/export', exportLeads)
 router.get('/:id', getLead)

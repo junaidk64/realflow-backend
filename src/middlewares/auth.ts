@@ -46,14 +46,15 @@ export const verifyToken = async (
 		const token = authHeader.substring(7)
 
 		const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload
+		console.log(decoded)
 
 		const [user, settings] = await Promise.all([
 			User.findById(decoded.userId).select(
 				'role permissions organizationId isActive',
 			),
-			Settings.findOne({ organizationId: decoded.organizationId }).select(
-				'businessType',
-			),
+			Settings.findOne({
+				userId: new mongoose.Types.ObjectId(decoded.userId),
+			}).select('businessType'),
 		])
 		if (!user || !user.isActive) {
 			res.status(401).json({
@@ -116,9 +117,9 @@ export const optionalAuth = async (
 			User.findById(decoded.userId).select(
 				'role permissions organizationId isActive',
 			),
-			Settings.findOne({ organizationId: decoded.organizationId }).select(
-				'businessType',
-			),
+			Settings.findOne({
+				userId: new mongoose.Types.ObjectId(decoded.userId),
+			}).select('businessType'),
 		])
 		if (user && user.isActive) {
 			req.user = {

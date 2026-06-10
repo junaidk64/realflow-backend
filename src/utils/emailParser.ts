@@ -132,6 +132,18 @@ export const extractLeadDataFromEmail = (
       result.services = cmmServices[1].split(/[,\/\|&]/).map(s => s.trim()).filter(Boolean);
       confidence += 10;
     }
+
+    // Phone: first non-empty line after "Phone", "Mobile", "Telephone", or "Contact Number"
+    if (!result.customerPhone) {
+      const cmmPhone = rawText.match(/(?:Phone(?:\s+Number)?|Mobile(?:\s+Number)?|Telephone(?:\s+Number)?|Contact\s+Number)\s*:?\s*[\r\n]+\s*([\+\(]?\d[\d\s\-\(\)\.]{6,20})/i);
+      if (cmmPhone?.[1]) {
+        const cleaned = cmmPhone[1].trim().replace(/\s+/g, ' ');
+        if (/\d{6,}/.test(cleaned.replace(/\D/g, ''))) {
+          result.customerPhone = cleaned;
+          confidence += 15;
+        }
+      }
+    }
   }
 
   // ── Real Estate / State Agent extraction ──────────────────────────────────
@@ -285,18 +297,30 @@ export const extractLeadDataFromEmail = (
 
   // Phone
   const phonePatterns = [
-    /(?:phone|telephone|mobile|tel|contact\s+number)\s*[:\-]?\s*([\+\d][\d\s\-\(\)]{7,20})/i,
+    // Label + value on same line (colon optional): "Phone: 07812 345678" or "Mobile 07812345678"
+    /(?:phone(?:\s+number)?|telephone(?:\s+number)?|mobile(?:\s+number)?|cell(?:phone)?|mob(?:ile)?|tel(?:ephone)?|contact\s+(?:number|no\.?|#))\s*[:\-]?\s*([\+\(]?\d[\d\s\-\(\)\.]{6,20})/i,
+    // Label on one line, value on next line (CMM / many lead providers)
+    /(?:phone(?:\s+number)?|telephone(?:\s+number)?|mobile(?:\s+number)?|cell(?:phone)?|mob(?:ile)?|tel(?:ephone)?|contact\s+(?:number|no\.?|#))\s*:?\s*[\r\n]+\s*([\+\(]?\d[\d\s\-\(\)\.]{6,20})/i,
+    // "Call/ring me/us/them on/at ..."
     /(?:call|ring)\s+(?:me|us|them)\s+(?:on|at)?\s*([\+\d][\d\s\-\(\)]{7,20})/i,
+    // UK number (07xxx xxxxxx, +44, 0044)
     /\b((?:\+44|0044|0)(?:\s?\d){9,12})\b/i,
+    // US/Canada: (555) 123-4567 or 555-123-4567 or 555.123.4567
+    /\b(\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4})\b/,
+    // 5+6 split (UK landline)
     /\b(\d{5}\s?\d{6})\b/,
+    // 4+3+4 split
     /\b(\d{4}\s?\d{3}\s?\d{4})\b/,
   ];
   for (const pattern of phonePatterns) {
     const match = fullText.match(pattern);
     if (match?.[1]) {
-      result.customerPhone = match[1].trim().replace(/\s+/g, ' ');
-      confidence += 15;
-      break;
+      const cleaned = match[1].trim().replace(/\s+/g, ' ');
+      if (/\d{6,}/.test(cleaned.replace(/\D/g, ''))) {
+        result.customerPhone = cleaned;
+        confidence += 15;
+        break;
+      }
     }
   }
 

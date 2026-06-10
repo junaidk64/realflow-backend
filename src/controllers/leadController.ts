@@ -2,8 +2,8 @@ import { NextFunction, Request, Response } from 'express'
 import mongoose from 'mongoose'
 import { EmailLog } from '../models/EmailLog'
 import { GmailConnection } from '../models/GmailConnection'
-import { SmtpConnection } from '../models/SmtpConnection'
 import { Lead } from '../models/Lead'
+import { SmtpConnection } from '../models/SmtpConnection'
 import { sendEmailForUser } from '../services/emailService'
 import { leadExtractionQueue } from '../services/queueService'
 import logger from '../utils/logger'
@@ -534,10 +534,16 @@ export const sendLeadEmail = async (
 		// Resolve sender address from active provider
 		let fromAddress = ''
 		if (result.provider === 'gmail') {
-			const conn = await GmailConnection.findOne({ userId, isActive: true }).lean()
+			const conn = await GmailConnection.findOne({
+				userId,
+				isActive: true,
+			}).lean()
 			fromAddress = conn?.email || ''
 		} else if (result.provider === 'smtp') {
-			const conn = await SmtpConnection.findOne({ userId, isActive: true }).lean()
+			const conn = await SmtpConnection.findOne({
+				userId,
+				isActive: true,
+			}).lean()
 			fromAddress = conn?.fromEmail || ''
 		}
 
@@ -563,6 +569,35 @@ export const sendLeadEmail = async (
 	}
 }
 
+//create lead
+export const createLead = async (
+	req: Request,
+	res: Response,
+	next: NextFunction,
+): Promise<void> => {
+	try {
+		const { userId, organizationId, businessType } = req.user!
+		const data = req.body
+
+		const lead = await Lead.create({
+			userId,
+			organizationId,
+			source: 'manual',
+			status: 'new',
+			n8nTriggered: true,
+			confidence: 100,
+			businessType: businessType || 'general',
+			aiProcessed: true,
+			aiScore: 100,
+			autoReplySent: data.autoReplySent == 'false' ? true : false,
+			...data,
+		})
+		res.status(201).json({ success: true, data: { lead } })
+	} catch (error) {
+		next(error)
+	}
+}
+
 export default {
 	getLeads,
 	getLead,
@@ -573,4 +608,5 @@ export default {
 	createLeadFromN8n,
 	testClassifyEmail,
 	sendLeadEmail,
+	// createLead,
 }
