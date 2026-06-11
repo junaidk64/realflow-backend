@@ -3,89 +3,144 @@ import mongoose from 'mongoose'
 import { EmailLog } from '../models/EmailLog'
 import { Lead } from '../models/Lead'
 import { WhatsAppConnection } from '../models/WhatsAppConnection'
-import { decrypt, encrypt, generateSecureToken } from '../utils/encryption'
+import { decrypt, encrypt } from '../utils/encryption'
 import {
 	sendTextMessage,
 	sendTemplateMessage,
 	sendMediaMessage,
+	exchangeCodeForToken,
+	getLongLivedToken,
+	getPhoneNumberDetails,
+	subscribeAppToWABA,
 } from '../services/whatsappService'
 import { emitToUser, emitToOrg } from '../services/socketService'
+import config from '../config'
 import logger from '../utils/logger'
 
-// ─── Connect WhatsApp ─────────────────────────────────────────────────────────
+// ─── Embedded Signup Config ───────────────────────────────────────────────────
 
-export const connectWhatsApp = async (
+/**
+ * Returns the platform Meta App ID needed by the frontend to initialise the
+ * Facebook JS SDK and launch the Embedded Signup dialog.
+ */
+export const getEmbeddedSignupConfig = (
+	_req: Request,
+	res: Response,
+): void => {
+	res.json({
+		success: true,
+		data: {
+			appId: config.whatsapp.appId,
+		},
+	})
+}
+
+// ─── Complete Embedded Signup ─────────────────────────────────────────────────
+
+/**
+ * Called by the frontend after the user completes the Meta Embedded Signup
+ * dialog. The frontend supplies the short-lived authorization code and the
+ * phoneNumberId / wabaId reported by Meta's onMessage callback.
+ *
+ * Flow:
+ *   1. Exchange code → short-lived user access token
+ *   2. Upgrade to long-lived token (~60 days)
+ *   3. Fetch phone number display details from Meta
+ *   4. Subscribe our platform app to the WABA for webhook events
+ *   5. Persist / update the WhatsAppConnection record
+ */
+export const completeEmbeddedSignup = async (
 	req: Request,
 	res: Response,
 	next: NextFunction,
 ): Promise<void> => {
 	try {
-		const { phoneNumberId, wabaId, displayPhoneNumber, accessToken, verifyToken, appSecret } =
-			req.body as {
-				phoneNumberId: string
-				wabaId: string
-				displayPhoneNumber: string
-				accessToken: string
-				verifyToken: string
-				appSecret: string
-			}
+		const { code, phoneNumberId, wabaId } = req.body as {
+			code: string
+			phoneNumberId: string
+			wabaId: string
+		}
 
-		if (!phoneNumberId || !wabaId || !accessToken || !verifyToken || !appSecret) {
-			res.status(400).json({ success: false, message: 'Missing required fields' })
+		if (!code || !phoneNumberId || !wabaId) {
+			res.status(400).json({
+				success: false,
+				message: 'code, phoneNumberId, and wabaId are required',
+			})
 			return
 		}
 
+		// 1. Exchange authorization code for access token
+		const tokenResult = await exchangeCodeForToken(code)
+		if (!tokenResult.success || !tokenResult.accessToken) {
+			res.status(502).json({
+				success: false,
+				message: tokenResult.error ?? 'Failed to exchange authorization code',
+			})
+			return
+		}
+
+		// 2. Upgrade to long-lived token; fall back to short-lived on failure
+		const longLivedResult = await getLongLivedToken(tokenResult.accessToken)
+		const finalToken = longLivedResult.success && longLivedResult.accessToken
+			? longLivedResult.accessToken
+			: tokenResult.accessToken
+
+		const expiresIn = longLivedResult.success
+			? longLivedResult.expiresIn
+			: tokenResult.expiresIn
+		const tokenExpiry = expiresIn
+			? new Date(Date.now() + expiresIn * 1000)
+			: null // null = treat as non-expiring
+
+		// 3. Fetch phone number display details (best-effort)
+		const phoneDetails = await getPhoneNumberDetails(phoneNumberId, finalToken)
+
+		// 4. Subscribe our app to the WABA so webhooks are routed to us
+		const subscribed = await subscribeAppToWABA(wabaId, finalToken)
+		if (!subscribed) {
+			logger.warn(
+				`WABA subscription failed for wabaId=${wabaId} — webhooks may not arrive`,
+			)
+		}
+
+		// 5. Persist connection (one active per org or per user)
 		const userId = req.user!.userId
 		const organizationId = req.user!.organizationId?.toString() ?? null
 
-		// One active connection per organization (or per user if no org)
 		const filter = organizationId ? { organizationId } : { userId }
-		const existing = await WhatsAppConnection.findOne(filter)
+		const encryptedToken = encrypt(finalToken)
 
-		const encryptedToken = encrypt(accessToken)
-		const encryptedVerify = encrypt(verifyToken)
-		const encryptedSecret = encrypt(appSecret)
-
-		let connection
-		if (existing) {
-			connection = await WhatsAppConnection.findByIdAndUpdate(
-				existing._id,
-				{
-					phoneNumberId,
-					wabaId,
-					displayPhoneNumber: displayPhoneNumber || '',
-					accessToken: encryptedToken,
-					verifyToken: encryptedVerify,
-					appSecret: encryptedSecret,
-					isActive: true,
-					syncError: null,
-				},
-				{ new: true },
-			)
-		} else {
-			connection = await WhatsAppConnection.create({
+		const connection = await WhatsAppConnection.findOneAndUpdate(
+			filter,
+			{
 				userId,
 				organizationId,
 				phoneNumberId,
 				wabaId,
-				displayPhoneNumber: displayPhoneNumber || '',
+				displayPhoneNumber: phoneDetails.displayPhoneNumber,
+				verifiedName: phoneDetails.verifiedName,
 				accessToken: encryptedToken,
-				verifyToken: encryptedVerify,
-				appSecret: encryptedSecret,
+				tokenExpiry,
 				isActive: true,
-			})
-		}
+				syncError: null,
+			},
+			{ upsert: true, new: true },
+		)
 
-		logger.info(`WhatsApp connected for user ${userId}, phoneNumberId ${phoneNumberId}`)
+		logger.info(
+			`WhatsApp connected via Embedded Signup — user=${userId} phone=${phoneDetails.displayPhoneNumber}`,
+		)
 
 		res.json({
 			success: true,
 			data: {
-				id: connection!._id,
+				id: connection._id,
 				phoneNumberId,
 				wabaId,
-				displayPhoneNumber: displayPhoneNumber || '',
+				displayPhoneNumber: phoneDetails.displayPhoneNumber,
+				verifiedName: phoneDetails.verifiedName,
 				isActive: true,
+				tokenExpiry,
 			},
 		})
 	} catch (error) {
@@ -126,7 +181,7 @@ export const getWhatsAppStatus = async (
 
 		const filter = organizationId ? { organizationId } : { userId }
 		const connection = await WhatsAppConnection.findOne(filter)
-			.select('-accessToken -verifyToken -appSecret')
+			.select('-accessToken')
 			.lean()
 
 		res.json({
@@ -276,7 +331,6 @@ export const getWhatsAppConversations = async (
 		const limitNum = Math.min(50, parseInt(limit, 10))
 		const skip = (pageNum - 1) * limitNum
 
-		// Find leads that have at least one WhatsApp message
 		const leadFilter: Record<string, unknown> = organizationId
 			? { organizationId }
 			: { userId }
@@ -288,7 +342,6 @@ export const getWhatsAppConversations = async (
 			]
 		}
 
-		// Aggregate: leads with WhatsApp messages + last message + unread count
 		const leads = await Lead.find(leadFilter)
 			.sort({ updatedAt: -1 })
 			.skip(skip)
@@ -297,7 +350,6 @@ export const getWhatsAppConversations = async (
 
 		const leadIds = leads.map((l) => l._id)
 
-		// Fetch last WhatsApp message per lead
 		const lastMessages = await EmailLog.aggregate([
 			{ $match: { leadId: { $in: leadIds }, channel: 'whatsapp' } },
 			{ $sort: { createdAt: -1 } },
@@ -306,7 +358,6 @@ export const getWhatsAppConversations = async (
 
 		const lastMsgMap = new Map(lastMessages.map((r) => [String(r._id), r.last]))
 
-		// Unread = incoming messages with no deliveryStatus update from our side
 		const unreadCounts = await EmailLog.aggregate([
 			{
 				$match: {
@@ -357,7 +408,6 @@ export const getLeadMessages = async (
 		const limitNum = Math.min(100, parseInt(limit, 10))
 		const skip = (pageNum - 1) * limitNum
 
-		// Verify lead ownership
 		const leadFilter = organizationId
 			? { _id: leadId, organizationId }
 			: { _id: leadId, userId }
@@ -392,7 +442,8 @@ export const getLeadMessages = async (
 }
 
 export default {
-	connectWhatsApp,
+	getEmbeddedSignupConfig,
+	completeEmbeddedSignup,
 	disconnectWhatsApp,
 	getWhatsAppStatus,
 	sendWhatsAppMessage,

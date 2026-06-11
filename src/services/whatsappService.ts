@@ -1,7 +1,8 @@
 import crypto from 'crypto'
+import config from '../config'
 import logger from '../utils/logger'
 
-const WA_API_BASE = 'https://graph.facebook.com/v21.0'
+const WA_API_BASE = `https://graph.facebook.com/${config.whatsapp.graphApiVersion}`
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,10 +40,23 @@ export interface WAWebhookPayload {
 	statuses: WAStatusUpdate[]
 }
 
+export interface WATokenResult {
+	success: boolean
+	accessToken?: string
+	expiresIn?: number      // seconds until expiry (absent = non-expiring)
+	tokenType?: string
+	error?: string
+}
+
+export interface WAPhoneNumberDetails {
+	displayPhoneNumber: string
+	verifiedName: string
+}
+
 // ─── Signature Verification ───────────────────────────────────────────────────
 
 /**
- * Validates X-Hub-Signature-256 from Meta.
+ * Validates X-Hub-Signature-256 from Meta using the platform-owned app secret.
  * rawBody must be the raw Buffer (before JSON.parse).
  */
 export const verifyWebhookSignature = (
@@ -150,6 +164,130 @@ export const parseWebhookPayload = (body: Record<string, unknown>): WAWebhookPay
 	}
 
 	return results
+}
+
+// ─── Embedded Signup OAuth ────────────────────────────────────────────────────
+
+/**
+ * Exchanges the short-lived authorization code from Embedded Signup for an
+ * access token. The code is generated client-side by the Facebook JS SDK.
+ */
+export const exchangeCodeForToken = async (code: string): Promise<WATokenResult> => {
+	try {
+		const params = new URLSearchParams({
+			client_id: config.whatsapp.appId,
+			client_secret: config.whatsapp.appSecret,
+			code,
+		})
+
+		const res = await fetch(
+			`https://graph.facebook.com/${config.whatsapp.graphApiVersion}/oauth/access_token?${params}`,
+		)
+		const data = (await res.json()) as Record<string, unknown>
+
+		if (!res.ok) {
+			const err = (data.error as Record<string, unknown>) ?? {}
+			const msg = String(err.message ?? `HTTP ${res.status}`)
+			logger.error('WhatsApp code exchange error:', data)
+			return { success: false, error: msg }
+		}
+
+		return {
+			success: true,
+			accessToken: String(data.access_token ?? ''),
+			expiresIn: data.expires_in as number | undefined,
+			tokenType: String(data.token_type ?? 'bearer'),
+		}
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : 'Unknown error'
+		logger.error('WhatsApp code exchange exception:', err)
+		return { success: false, error: msg }
+	}
+}
+
+/**
+ * Exchanges a short-lived user access token for a long-lived one (~60 days).
+ * Falls back gracefully — callers should use the short-lived token if this fails.
+ */
+export const getLongLivedToken = async (shortLivedToken: string): Promise<WATokenResult> => {
+	try {
+		const params = new URLSearchParams({
+			grant_type: 'fb_exchange_token',
+			client_id: config.whatsapp.appId,
+			client_secret: config.whatsapp.appSecret,
+			fb_exchange_token: shortLivedToken,
+		})
+
+		const res = await fetch(
+			`https://graph.facebook.com/${config.whatsapp.graphApiVersion}/oauth/access_token?${params}`,
+		)
+		const data = (await res.json()) as Record<string, unknown>
+
+		if (!res.ok) {
+			const err = (data.error as Record<string, unknown>) ?? {}
+			logger.warn('Long-lived token exchange failed:', err)
+			return { success: false, error: String(err.message ?? `HTTP ${res.status}`) }
+		}
+
+		return {
+			success: true,
+			accessToken: String(data.access_token ?? ''),
+			expiresIn: data.expires_in as number | undefined,
+		}
+	} catch (err) {
+		logger.warn('Long-lived token exchange exception:', err)
+		return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+	}
+}
+
+/**
+ * Fetches display phone number and verified name for a given phoneNumberId.
+ */
+export const getPhoneNumberDetails = async (
+	phoneNumberId: string,
+	accessToken: string,
+): Promise<WAPhoneNumberDetails> => {
+	try {
+		const res = await fetch(
+			`${WA_API_BASE}/${phoneNumberId}?fields=display_phone_number,verified_name`,
+			{ headers: { Authorization: `Bearer ${accessToken}` } },
+		)
+		const data = (await res.json()) as Record<string, unknown>
+
+		return {
+			displayPhoneNumber: String(data.display_phone_number ?? ''),
+			verifiedName: String(data.verified_name ?? ''),
+		}
+	} catch (err) {
+		logger.warn('getPhoneNumberDetails error:', err)
+		return { displayPhoneNumber: '', verifiedName: '' }
+	}
+}
+
+/**
+ * Subscribes our platform app to receive webhook events for a WABA.
+ * Must be called after the user grants access via Embedded Signup.
+ */
+export const subscribeAppToWABA = async (
+	wabaId: string,
+	accessToken: string,
+): Promise<boolean> => {
+	try {
+		const res = await fetch(`${WA_API_BASE}/${wabaId}/subscribed_apps`, {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${accessToken}` },
+		})
+		const data = (await res.json()) as Record<string, unknown>
+
+		if (!res.ok) {
+			logger.error('WABA subscription error:', data)
+			return false
+		}
+		return data.success === true
+	} catch (err) {
+		logger.error('subscribeAppToWABA exception:', err)
+		return false
+	}
 }
 
 // ─── Send Messages ────────────────────────────────────────────────────────────
@@ -261,6 +399,10 @@ export const markMessageRead = async (
 export default {
 	verifyWebhookSignature,
 	parseWebhookPayload,
+	exchangeCodeForToken,
+	getLongLivedToken,
+	getPhoneNumberDetails,
+	subscribeAppToWABA,
 	sendTextMessage,
 	sendTemplateMessage,
 	sendMediaMessage,

@@ -1362,4 +1362,413 @@ NEXT_PUBLIC_API_URL=https://api.yourapp.com
 
 ---
 
+*End of original FRONTEND_WHATSAPP_INTEGRATION.md*
+
+---
+
+---
+
+# UPDATED GUIDE — Meta Embedded Signup Architecture
+
+> **What changed and why**
+>
+> The original guide (Sections 1–13 above) assumed users manually entered Meta
+> credentials (Phone Number ID, WABA ID, Access Token, Verify Token, App Secret).
+> That approach has been **completely replaced**.
+>
+> The CRM platform now owns a single Meta App.  Customers connect their WhatsApp
+> Business Account through a guided OAuth dialog (Meta Embedded Signup) — no
+> developer knowledge, no Meta Developer Console, no credentials to copy.
+>
+> **Everything in Sections 1–8 and 10–13 remains valid and unchanged.**
+> Only **Section 9 (WhatsApp Settings — Connection Setup)** is superseded by the
+> new section below.
+
+---
+
+## Section 9 — DEPRECATED: Manual Credentials Form
+
+> ⚠️ **Do not implement the form shown in the original Section 9.**
+> The `POST /api/whatsapp/connect` endpoint no longer exists.
+> The six-field form (phoneNumberId, wabaId, accessToken, verifyToken, appSecret,
+> displayPhoneNumber) must be removed from any existing code.
+>
+> Replace it entirely with the Embedded Signup flow described below.
+
+---
+
+## Section 14 — WhatsApp Settings: Embedded Signup (NEW)
+
+### How it works end-to-end
+
+```
+Settings page
+  └─ "Connect WhatsApp" button
+        │
+        ▼
+   Facebook JS SDK (loaded with platform APP_ID from backend)
+        │  user logs in to Meta, selects their WABA & phone number
+        ▼
+   Meta fires onMessage → { phone_number_id, waba_id }
+   FB Login callback   → { code }  (short-lived auth code)
+        │
+        ▼
+   POST /api/whatsapp/embedded-signup/complete
+        body: { code, phoneNumberId, wabaId }
+        │
+        ▼  (backend)
+   1. Exchange code → access token (Meta Graph API)
+   2. Upgrade to long-lived token (~60 days)
+   3. Fetch display phone number & verified name
+   4. Subscribe platform app to WABA webhooks
+   5. Save WhatsAppConnection record
+        │
+        ▼
+   Response: { connected: true, displayPhoneNumber, verifiedName }
+```
+
+### New API endpoints
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `GET` | `/api/whatsapp/embedded-signup/config` | JWT | Returns `{ appId }` — the platform Meta App ID needed to init the FB SDK |
+| `POST` | `/api/whatsapp/embedded-signup/complete` | JWT | Exchanges the OAuth code, stores the connection |
+| `DELETE` | `/api/whatsapp/disconnect` | JWT | Deactivates the connection (unchanged) |
+| `GET` | `/api/whatsapp/status` | JWT | Returns connection state (unchanged) |
+
+**Removed endpoint:** `POST /api/whatsapp/connect` — do not call this.
+
+### Updated `src/lib/api/whatsapp.ts`
+
+Replace the old `connectWhatsApp` function with these two:
+
+```typescript
+// GET /api/whatsapp/embedded-signup/config
+export const getEmbeddedSignupConfig = () =>
+  api.get<{ data: { appId: string } }>('/api/whatsapp/embedded-signup/config')
+
+// POST /api/whatsapp/embedded-signup/complete
+export interface EmbeddedSignupPayload {
+  code: string           // short-lived auth code from FB Login callback
+  phoneNumberId: string  // from Meta's onMessage event (data.phone_number_id)
+  wabaId: string         // from Meta's onMessage event (data.waba_id)
+}
+
+export const completeEmbeddedSignup = (payload: EmbeddedSignupPayload) =>
+  api.post<{
+    data: {
+      id: string
+      phoneNumberId: string
+      wabaId: string
+      displayPhoneNumber: string
+      verifiedName: string
+      isActive: boolean
+      tokenExpiry: string | null
+    }
+  }>('/api/whatsapp/embedded-signup/complete', payload)
+```
+
+Remove or delete the old `connectWhatsApp` export entirely.
+
+### Updated `src/types/whatsapp.ts`
+
+Update `WhatsAppConnection` — remove credential fields, add new ones:
+
+```typescript
+export interface WhatsAppConnection {
+  _id: string
+  phoneNumberId: string
+  wabaId: string
+  displayPhoneNumber: string
+  verifiedName: string           // ← new: business display name from Meta
+  isActive: boolean
+  messageCount: number
+  lastMessageAt: string | null
+  tokenExpiry: string | null     // ← new: when the OAuth token expires
+  // accessToken is never returned to the frontend
+}
+```
+
+### New `WhatsAppSettings` component
+
+Replace the old six-field form in your Settings page with this component.
+It loads the Facebook JS SDK dynamically (no npm package needed), then launches
+Meta's hosted Embedded Signup dialog when the user clicks "Connect WhatsApp".
+
+```tsx
+// src/components/whatsapp/WhatsAppSettings.tsx
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import {
+  getEmbeddedSignupConfig,
+  completeEmbeddedSignup,
+  disconnectWhatsApp,
+  getWhatsAppStatus,
+} from '@/lib/api/whatsapp'
+import { WhatsAppConnection } from '@/types/whatsapp'
+
+declare global {
+  interface Window {
+    FB: {
+      init: (opts: Record<string, unknown>) => void
+      login: (
+        cb: (response: { authResponse?: { code?: string } }) => void,
+        opts: Record<string, unknown>,
+      ) => void
+    }
+    fbAsyncInit?: () => void
+  }
+}
+
+export const WhatsAppSettings = () => {
+  const [connection, setConnection] = useState<WhatsAppConnection | null>(null)
+  const [appId, setAppId] = useState<string | null>(null)
+  const [sdkReady, setSdkReady] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [connecting, setConnecting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Fetch current status + platform App ID on mount
+  useEffect(() => {
+    Promise.all([getWhatsAppStatus(), getEmbeddedSignupConfig()])
+      .then(([statusRes, configRes]) => {
+        setConnection(statusRes.data.data.connection)
+        setAppId(configRes.data.data.appId)
+      })
+      .catch(() => setError('Failed to load WhatsApp settings'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  // Inject Facebook JS SDK once we have the App ID
+  useEffect(() => {
+    if (!appId || sdkReady) return
+
+    window.fbAsyncInit = () => {
+      window.FB.init({
+        appId,
+        autoLogAppEvents: true,
+        xfbml: true,
+        version: 'v21.0',
+      })
+      setSdkReady(true)
+    }
+
+    if (!document.getElementById('facebook-jssdk')) {
+      const script = document.createElement('script')
+      script.id = 'facebook-jssdk'
+      script.src = 'https://connect.facebook.net/en_US/sdk.js'
+      script.async = true
+      script.defer = true
+      document.body.appendChild(script)
+    }
+  }, [appId, sdkReady])
+
+  // Capture WABA / phone number from Meta's dialog message event
+  const handleConnect = useCallback(() => {
+    if (!sdkReady) return
+    setConnecting(true)
+    setError(null)
+
+    // Meta fires a window message with the selected WABA details
+    let phoneNumberId = ''
+    let wabaId = ''
+
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.origin !== 'https://www.facebook.com' &&
+        event.origin !== 'https://web.facebook.com'
+      ) return
+
+      try {
+        const data =
+          typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+        if (data.type === 'WA_EMBEDDED_SIGNUP') {
+          if (data.event === 'FINISH') {
+            phoneNumberId = data.data?.phone_number_id ?? ''
+            wabaId = data.data?.waba_id ?? ''
+          }
+        }
+      } catch {
+        // non-JSON message — ignore
+      }
+    }
+
+    window.addEventListener('message', onMessage)
+
+    window.FB.login(
+      async (response) => {
+        window.removeEventListener('message', onMessage)
+
+        const code = response.authResponse?.code
+        if (!code) {
+          setError('Connection cancelled or permission denied.')
+          setConnecting(false)
+          return
+        }
+
+        if (!phoneNumberId || !wabaId) {
+          setError('Could not retrieve WhatsApp account details. Please try again.')
+          setConnecting(false)
+          return
+        }
+
+        try {
+          const res = await completeEmbeddedSignup({ code, phoneNumberId, wabaId })
+          setConnection({
+            _id: res.data.data.id,
+            phoneNumberId: res.data.data.phoneNumberId,
+            wabaId: res.data.data.wabaId,
+            displayPhoneNumber: res.data.data.displayPhoneNumber,
+            verifiedName: res.data.data.verifiedName,
+            isActive: true,
+            messageCount: 0,
+            lastMessageAt: null,
+            tokenExpiry: res.data.data.tokenExpiry,
+          })
+        } catch (err: unknown) {
+          const msg =
+            err instanceof Error ? err.message : 'Failed to complete WhatsApp setup'
+          setError(msg)
+        } finally {
+          setConnecting(false)
+        }
+      },
+      {
+        config_id: '<YOUR_EMBEDDED_SIGNUP_CONFIG_ID>', // set in Meta App dashboard
+        response_type: 'code',
+        override_default_response_type: true,
+        extras: {
+          setup: {},
+          featureName: 'whatsapp_embedded_signup',
+          sessionInfoVersion: '3',
+        },
+      },
+    )
+  }, [sdkReady])
+
+  const handleDisconnect = async () => {
+    await disconnectWhatsApp()
+    setConnection(null)
+  }
+
+  if (loading) return <div className="animate-pulse h-24 bg-gray-100 rounded-lg" />
+
+  if (connection?.isActive) {
+    return (
+      <div className="border rounded-lg p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 rounded-full bg-green-500" />
+            <div>
+              <p className="font-medium text-sm">WhatsApp Connected</p>
+              <p className="text-xs text-gray-500">
+                {connection.verifiedName || connection.displayPhoneNumber}
+                {connection.displayPhoneNumber && connection.verifiedName && (
+                  <> &middot; {connection.displayPhoneNumber}</>
+                )}
+              </p>
+            </div>
+          </div>
+          <button onClick={handleDisconnect} className="text-sm text-red-500 hover:underline">
+            Disconnect
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="border rounded-lg p-4 space-y-3">
+      <h3 className="font-semibold text-sm">Connect WhatsApp Business</h3>
+      <p className="text-xs text-gray-500">
+        Click the button below to connect your WhatsApp Business account.
+        You will be guided through a Meta login dialog — no credentials to enter.
+      </p>
+
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+          {error}
+        </p>
+      )}
+
+      <button
+        onClick={handleConnect}
+        disabled={!sdkReady || connecting}
+        className="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-medium
+                   hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed
+                   transition-colors flex items-center justify-center gap-2"
+      >
+        {connecting ? (
+          <>
+            <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+            Connecting…
+          </>
+        ) : (
+          'Connect WhatsApp'
+        )}
+      </button>
+    </div>
+  )
+}
+```
+
+### `config_id` — Meta Embedded Signup Configuration
+
+In the Facebook App Dashboard:
+1. Go to **WhatsApp → Embedded Signup**.
+2. Create an Embedded Signup configuration and copy its **Config ID**.
+3. Replace `'<YOUR_EMBEDDED_SIGNUP_CONFIG_ID>'` in the component above with that value.
+
+Store it as an environment variable and load it from the backend's
+`GET /api/whatsapp/embedded-signup/config` response if you don't want it
+hardcoded (add a `configId` field to the response and the config env var
+`WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID`).
+
+### Required environment variables (backend `.env`)
+
+```env
+# Platform Meta App — set once by the CRM operator, never exposed to customers
+WHATSAPP_APP_ID=<your Meta App ID>
+WHATSAPP_APP_SECRET=<your Meta App Secret>
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=<random secret string you choose>
+WHATSAPP_GRAPH_API_VERSION=v21.0          # optional, defaults to v21.0
+```
+
+### Meta App Dashboard checklist (one-time platform setup)
+
+1. Create a Meta App → **Business** type.
+2. Add the **WhatsApp** product.
+3. Under **WhatsApp → Configuration**, set:
+   - **Webhook URL:** `https://your-api-domain.com/api/webhooks/whatsapp`
+   - **Verify Token:** the value of `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
+   - **Subscribe to:** `messages`
+4. Under **WhatsApp → Embedded Signup**, configure the signup flow and note the **Config ID**.
+5. App must be in **Live** mode (not Development) for real phone numbers to work.
+
+### Updated incoming message flow (no change needed in frontend)
+
+```
+Customer sends WhatsApp message
+  → Meta → POST /api/webhooks/whatsapp
+  → Backend validates HMAC with platform APP_SECRET (single check, no per-connection secret)
+  → Routes to correct org by phoneNumberId
+  → whatsappProcessingQueue.add()
+  → Worker: find/create lead, create EmailLog
+  → socket.emit('whatsapp:message:new')
+  → Store.addMessage() in browser   ← same as before
+```
+
+### What to remove from the frontend
+
+| Old code | Action |
+|----------|--------|
+| `connectWhatsApp()` API call | Delete |
+| `WhatsAppConnectPayload` type | Delete |
+| Six-field manual form in Settings | Replace with `<WhatsAppSettings />` above |
+| Any reference to `verifyToken` or `appSecret` fields | Delete |
+| `POST /api/whatsapp/connect` calls | Delete |
+
+---
+
 *End of FRONTEND_WHATSAPP_INTEGRATION.md*

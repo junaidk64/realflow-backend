@@ -5,9 +5,15 @@ import { WebhookLog } from '../models/WebhookLog'
 import { WhatsAppConnection } from '../models/WhatsAppConnection'
 import { Workflow } from '../models/Workflow'
 import { addEmailProcessingJob } from '../services/queueService'
-import { addWhatsAppMessageJob, addWhatsAppStatusJob } from '../services/whatsappQueueService'
-import { parseWebhookPayload, verifyWebhookSignature } from '../services/whatsappService'
-import { decrypt } from '../utils/encryption'
+import {
+	addWhatsAppMessageJob,
+	addWhatsAppStatusJob,
+} from '../services/whatsappQueueService'
+import {
+	parseWebhookPayload,
+	verifyWebhookSignature,
+} from '../services/whatsappService'
+import config from '../config'
 import logger from '../utils/logger'
 
 export const handleGmailWebhook = async (
@@ -195,46 +201,32 @@ export const handleN8nCallback = async (
 
 // ─── WhatsApp Webhook Verification (GET) ─────────────────────────────────────
 // Meta calls GET /api/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=X&hub.challenge=Y
-// We find the connection by verifyToken and respond with the challenge.
+// The platform registers one webhook URL for its own Meta App.  The verify token
+// is a single platform-wide secret stored in WHATSAPP_WEBHOOK_VERIFY_TOKEN — no
+// per-customer token look-up needed.
 
-export const verifyWhatsAppWebhook = async (
+export const verifyWhatsAppWebhook = (
 	req: Request,
 	res: Response,
-): Promise<void> => {
+): void => {
 	const mode = req.query['hub.mode'] as string
 	const token = req.query['hub.verify_token'] as string
 	const challenge = req.query['hub.challenge'] as string
 
-	if (mode !== 'subscribe' || !token) {
-		res.sendStatus(403)
+	if (mode === 'subscribe' && token === config.whatsapp.webhookVerifyToken) {
+		logger.info('WhatsApp webhook verified successfully')
+		res.status(200).send(challenge)
 		return
 	}
 
-	// Find any connection whose decrypted verifyToken matches
-	const connections = await WhatsAppConnection.find({ isActive: true })
-	let matched = false
-	for (const conn of connections) {
-		try {
-			if (decrypt(conn.verifyToken) === token) {
-				matched = true
-				break
-			}
-		} catch {
-			// corrupted token — skip
-		}
-	}
-
-	if (!matched) {
-		logger.warn(`WhatsApp webhook verification failed — unknown verifyToken`)
-		res.sendStatus(403)
-		return
-	}
-
-	logger.info('WhatsApp webhook verified successfully')
-	res.status(200).send(challenge)
+	logger.warn('WhatsApp webhook verification failed — token mismatch')
+	res.sendStatus(403)
 }
 
 // ─── WhatsApp Webhook (POST) ──────────────────────────────────────────────────
+// The platform-owned Meta App signs every request with the platform APP_SECRET.
+// We validate the HMAC once up-front, then route each payload to the right
+// organisation by phoneNumberId.
 
 export const handleWhatsAppWebhook = async (
 	req: Request,
@@ -243,45 +235,46 @@ export const handleWhatsAppWebhook = async (
 	// Always ack immediately — Meta retries on non-200
 	res.sendStatus(200)
 
-	const rawBody: Buffer = (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body))
+	const rawBody: Buffer =
+		(req as Request & { rawBody?: Buffer }).rawBody ??
+		Buffer.from(JSON.stringify(req.body))
 	const signature = (req.headers['x-hub-signature-256'] as string) ?? ''
 
 	try {
+		// Validate HMAC using platform-wide app secret before any DB work
+		if (signature && config.whatsapp.appSecret) {
+			const valid = verifyWebhookSignature(rawBody, signature, config.whatsapp.appSecret)
+			if (!valid) {
+				logger.error('WhatsApp webhook: HMAC signature validation failed')
+				await WebhookLog.create({
+					type: 'whatsapp_webhook',
+					payload: req.body,
+					status: 'failed',
+					error: 'Signature validation failed',
+				}).catch(() => {})
+				return
+			}
+		}
+
 		const payloads = parseWebhookPayload(req.body as Record<string, unknown>)
 
 		for (const payload of payloads) {
-			// Find the connection for this phoneNumberId to validate signature and get user
+			// Route to the right org / user via phoneNumberId
 			const connection = await WhatsAppConnection.findOne({
 				phoneNumberId: payload.phoneNumberId,
 				isActive: true,
 			})
 
 			if (!connection) {
-				logger.warn(`WhatsApp webhook for unknown phoneNumberId: ${payload.phoneNumberId}`)
+				logger.warn(
+					`WhatsApp webhook for unknown phoneNumberId: ${payload.phoneNumberId}`,
+				)
 				continue
-			}
-
-			// Validate HMAC signature
-			if (signature) {
-				const appSecret = decrypt(connection.appSecret)
-				const valid = verifyWebhookSignature(rawBody, signature, appSecret)
-				if (!valid) {
-					logger.error(`WhatsApp signature validation failed for ${payload.phoneNumberId}`)
-					await WebhookLog.create({
-						type: 'whatsapp_webhook',
-						payload: req.body,
-						status: 'failed',
-						error: 'Signature validation failed',
-						userId: connection.userId,
-					})
-					continue
-				}
 			}
 
 			const userId = connection.userId.toString()
 			const organizationId = connection.organizationId?.toString() ?? null
 
-			// Log receipt
 			const webhookLog = await WebhookLog.create({
 				type: 'whatsapp_webhook',
 				payload: req.body,
@@ -290,7 +283,6 @@ export const handleWhatsAppWebhook = async (
 				processedAt: new Date(),
 			})
 
-			// Queue each message
 			for (const message of payload.messages) {
 				await addWhatsAppMessageJob({
 					phoneNumberId: payload.phoneNumberId,
@@ -301,7 +293,6 @@ export const handleWhatsAppWebhook = async (
 				})
 			}
 
-			// Queue each status update
 			for (const status of payload.statuses) {
 				await addWhatsAppStatusJob({ status, userId, organizationId })
 			}

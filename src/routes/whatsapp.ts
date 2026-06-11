@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import {
-	connectWhatsApp,
+	getEmbeddedSignupConfig,
+	completeEmbeddedSignup,
 	disconnectWhatsApp,
 	getWhatsAppStatus,
 	sendWhatsAppMessage,
@@ -15,8 +16,11 @@ const router: Router = Router()
 // All routes require authentication
 router.use(verifyToken)
 
+// Embedded Signup — replaces the old manual /connect endpoint
+router.get('/embedded-signup/config', getEmbeddedSignupConfig)
+router.post('/embedded-signup/complete', completeEmbeddedSignup)
+
 // Connection management
-router.post('/connect', connectWhatsApp)
 router.delete('/disconnect', disconnectWhatsApp)
 router.get('/status', getWhatsAppStatus)
 

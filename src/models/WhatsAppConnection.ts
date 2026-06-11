@@ -3,13 +3,18 @@ import mongoose, { Document, Schema } from 'mongoose'
 export interface IWhatsAppConnection extends Document {
 	userId: mongoose.Types.ObjectId
 	organizationId: mongoose.Types.ObjectId | null
-	// Meta API credentials
-	phoneNumberId: string         // WhatsApp Phone Number ID from Meta dashboard
+	// Meta identifiers — obtained via Embedded Signup, never entered manually
+	phoneNumberId: string         // WhatsApp Phone Number ID
 	wabaId: string                // WhatsApp Business Account ID
 	displayPhoneNumber: string    // Human-readable e.g. "+1 555 000 0000"
-	accessToken: string           // Encrypted permanent system user token
-	verifyToken: string           // Encrypted webhook verify token (set by user in Meta dashboard)
-	appSecret: string             // Encrypted Meta App Secret (for signature validation)
+	verifiedName: string          // Business display name from Meta
+	// Encrypted OAuth access token obtained via Embedded Signup code exchange
+	accessToken: string
+	tokenExpiry: Date | null      // When the access token expires (null = permanent)
+	// Meta user who authorised the connection
+	metaUserId: string | null
+	// OAuth scopes granted by the user
+	scope: string | null
 	isActive: boolean
 	lastMessageAt: Date | null
 	messageCount: number
@@ -43,17 +48,25 @@ const WhatsAppConnectionSchema = new Schema<IWhatsAppConnection>(
 			type: String,
 			default: '',
 		},
+		verifiedName: {
+			type: String,
+			default: '',
+		},
 		accessToken: {
 			type: String,
 			required: true,
 		},
-		verifyToken: {
-			type: String,
-			required: true,
+		tokenExpiry: {
+			type: Date,
+			default: null,
 		},
-		appSecret: {
+		metaUserId: {
 			type: String,
-			required: true,
+			default: null,
+		},
+		scope: {
+			type: String,
+			default: null,
 		},
 		isActive: {
 			type: Boolean,
