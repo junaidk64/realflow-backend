@@ -1,20 +1,20 @@
 import { NextFunction, Request, Response } from 'express'
 import mongoose from 'mongoose'
+import config from '../config'
 import { EmailLog } from '../models/EmailLog'
 import { Lead } from '../models/Lead'
 import { WhatsAppConnection } from '../models/WhatsAppConnection'
-import { decrypt, encrypt } from '../utils/encryption'
+import { emitToOrg, emitToUser } from '../services/socketService'
 import {
-	sendTextMessage,
-	sendTemplateMessage,
-	sendMediaMessage,
 	exchangeCodeForToken,
 	getLongLivedToken,
 	getPhoneNumberDetails,
+	sendMediaMessage,
+	sendTemplateMessage,
+	sendTextMessage,
 	subscribeAppToWABA,
 } from '../services/whatsappService'
-import { emitToUser, emitToOrg } from '../services/socketService'
-import config from '../config'
+import { decrypt, encrypt } from '../utils/encryption'
 import logger from '../utils/logger'
 
 // ─── Embedded Signup Config ───────────────────────────────────────────────────
@@ -23,14 +23,12 @@ import logger from '../utils/logger'
  * Returns the platform Meta App ID needed by the frontend to initialise the
  * Facebook JS SDK and launch the Embedded Signup dialog.
  */
-export const getEmbeddedSignupConfig = (
-	_req: Request,
-	res: Response,
-): void => {
+export const getEmbeddedSignupConfig = (_req: Request, res: Response): void => {
 	res.json({
 		success: true,
 		data: {
 			appId: config.whatsapp.appId,
+			configId: `whatsapp_${config.whatsapp.appId}`,
 		},
 	})
 }
@@ -81,9 +79,10 @@ export const completeEmbeddedSignup = async (
 
 		// 2. Upgrade to long-lived token; fall back to short-lived on failure
 		const longLivedResult = await getLongLivedToken(tokenResult.accessToken)
-		const finalToken = longLivedResult.success && longLivedResult.accessToken
-			? longLivedResult.accessToken
-			: tokenResult.accessToken
+		const finalToken =
+			longLivedResult.success && longLivedResult.accessToken
+				? longLivedResult.accessToken
+				: tokenResult.accessToken
 
 		const expiresIn = longLivedResult.success
 			? longLivedResult.expiresIn
@@ -232,14 +231,20 @@ export const sendWhatsAppMessage = async (
 		}
 
 		if (!to) {
-			res.status(400).json({ success: false, message: 'Recipient phone number required' })
+			res
+				.status(400)
+				.json({ success: false, message: 'Recipient phone number required' })
 			return
 		}
 
-		const filter = organizationId ? { organizationId, isActive: true } : { userId, isActive: true }
+		const filter = organizationId
+			? { organizationId, isActive: true }
+			: { userId, isActive: true }
 		const connection = await WhatsAppConnection.findOne(filter)
 		if (!connection) {
-			res.status(400).json({ success: false, message: 'No active WhatsApp connection' })
+			res
+				.status(400)
+				.json({ success: false, message: 'No active WhatsApp connection' })
 			return
 		}
 
@@ -249,16 +254,49 @@ export const sendWhatsAppMessage = async (
 		let sentBody = ''
 
 		if (type === 'text') {
-			if (!text) { res.status(400).json({ success: false, message: 'text is required' }); return }
-			result = await sendTextMessage(connection.phoneNumberId, accessToken, to, text)
+			if (!text) {
+				res.status(400).json({ success: false, message: 'text is required' })
+				return
+			}
+			result = await sendTextMessage(
+				connection.phoneNumberId,
+				accessToken,
+				to,
+				text,
+			)
 			sentBody = text
 		} else if (type === 'template') {
-			if (!templateName) { res.status(400).json({ success: false, message: 'templateName is required' }); return }
-			result = await sendTemplateMessage(connection.phoneNumberId, accessToken, to, templateName, languageCode, components)
+			if (!templateName) {
+				res
+					.status(400)
+					.json({ success: false, message: 'templateName is required' })
+				return
+			}
+			result = await sendTemplateMessage(
+				connection.phoneNumberId,
+				accessToken,
+				to,
+				templateName,
+				languageCode,
+				components,
+			)
 			sentBody = `[Template: ${templateName}]`
 		} else if (type === 'media') {
-			if (!mediaType || !mediaId) { res.status(400).json({ success: false, message: 'mediaType and mediaId are required' }); return }
-			result = await sendMediaMessage(connection.phoneNumberId, accessToken, to, mediaType, mediaId, caption)
+			if (!mediaType || !mediaId) {
+				res.status(400).json({
+					success: false,
+					message: 'mediaType and mediaId are required',
+				})
+				return
+			}
+			result = await sendMediaMessage(
+				connection.phoneNumberId,
+				accessToken,
+				to,
+				mediaType,
+				mediaId,
+				caption,
+			)
 			sentBody = caption ? `[${mediaType}: ${caption}]` : `[${mediaType}]`
 		} else {
 			res.status(400).json({ success: false, message: 'Invalid message type' })
@@ -266,14 +304,22 @@ export const sendWhatsAppMessage = async (
 		}
 
 		if (!result.success) {
-			res.status(502).json({ success: false, message: result.error ?? 'WhatsApp send failed' })
+			res.status(502).json({
+				success: false,
+				message: result.error ?? 'WhatsApp send failed',
+			})
 			return
 		}
 
 		// Persist outgoing message
 		const resolvedLeadId = leadId
 			? new mongoose.Types.ObjectId(leadId)
-			: (await Lead.findOne({ userId, customerPhone: { $regex: to.replace(/\D/g, '') } }))?._id ?? null
+			: ((
+					await Lead.findOne({
+						userId,
+						customerPhone: { $regex: to.replace(/\D/g, '') },
+					})
+				)?._id ?? null)
 
 		const emailLog = await EmailLog.create({
 			userId,
@@ -287,7 +333,12 @@ export const sendWhatsAppMessage = async (
 			htmlBody: '',
 			whatsappMessageId: result.messageId ?? '',
 			whatsappPhone: to,
-			messageType: type === 'media' ? (mediaType ?? 'image') : type === 'template' ? 'template' : 'text',
+			messageType:
+				type === 'media'
+					? (mediaType ?? 'image')
+					: type === 'template'
+						? 'template'
+						: 'text',
 			deliveryStatus: 'sent',
 			status: 'sent',
 			sentAt: new Date(),
@@ -306,10 +357,14 @@ export const sendWhatsAppMessage = async (
 			deliveryStatus: 'sent',
 			timestamp: emailLog.sentAt,
 		}
-		if (organizationId) emitToOrg(organizationId, 'whatsapp:message:new', msgPayload)
+		if (organizationId)
+			emitToOrg(organizationId, 'whatsapp:message:new', msgPayload)
 		emitToUser(userId, 'whatsapp:message:new', msgPayload)
 
-		res.json({ success: true, data: { messageId: result.messageId, emailLogId: emailLog._id } })
+		res.json({
+			success: true,
+			data: { messageId: result.messageId, emailLogId: emailLog._id },
+		})
 	} catch (error) {
 		next(error)
 	}
@@ -325,7 +380,11 @@ export const getWhatsAppConversations = async (
 	try {
 		const userId = req.user!.userId
 		const organizationId = req.user!.organizationId?.toString() ?? null
-		const { page = '1', limit = '20', search = '' } = req.query as Record<string, string>
+		const {
+			page = '1',
+			limit = '20',
+			search = '',
+		} = req.query as Record<string, string>
 
 		const pageNum = Math.max(1, parseInt(page, 10))
 		const limitNum = Math.min(50, parseInt(limit, 10))
@@ -369,7 +428,9 @@ export const getWhatsAppConversations = async (
 			},
 			{ $group: { _id: '$leadId', count: { $sum: 1 } } },
 		])
-		const unreadMap = new Map(unreadCounts.map((r) => [String(r._id), r.count as number]))
+		const unreadMap = new Map(
+			unreadCounts.map((r) => [String(r._id), r.count as number]),
+		)
 
 		const conversations = leads.map((lead) => ({
 			lead,
@@ -383,7 +444,12 @@ export const getWhatsAppConversations = async (
 			success: true,
 			data: {
 				conversations,
-				pagination: { page: pageNum, limit: limitNum, total, pages: Math.ceil(total / limitNum) },
+				pagination: {
+					page: pageNum,
+					limit: limitNum,
+					total,
+					pages: Math.ceil(total / limitNum),
+				},
 			},
 		})
 	} catch (error) {
@@ -402,7 +468,11 @@ export const getLeadMessages = async (
 		const userId = req.user!.userId
 		const organizationId = req.user!.organizationId?.toString() ?? null
 		const { leadId } = req.params
-		const { channel, page = '1', limit = '50' } = req.query as Record<string, string>
+		const {
+			channel,
+			page = '1',
+			limit = '50',
+		} = req.query as Record<string, string>
 
 		const pageNum = Math.max(1, parseInt(page, 10))
 		const limitNum = Math.min(100, parseInt(limit, 10))
@@ -433,7 +503,12 @@ export const getLeadMessages = async (
 			success: true,
 			data: {
 				messages,
-				pagination: { page: pageNum, limit: limitNum, total, pages: Math.ceil(total / limitNum) },
+				pagination: {
+					page: pageNum,
+					limit: limitNum,
+					total,
+					pages: Math.ceil(total / limitNum),
+				},
 			},
 		})
 	} catch (error) {
