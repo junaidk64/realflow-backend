@@ -3,8 +3,8 @@ dotenv.config()
 
 import cors from 'cors'
 import express from 'express'
-import { createServer } from 'http'
 import helmet from 'helmet'
+import { createServer } from 'http'
 import { config } from './config'
 import { connectDatabase } from './config/database'
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler'
@@ -152,6 +152,11 @@ const startServer = async (): Promise<void> => {
 
 		// Initialise Socket.IO before starting the server
 		initSocket(httpServer)
+
+		// Listen for client 'user-in' events and log them (useful for debugging)
+		// listenUserIn((data) => {
+		// 	logger.info(`Received 'user-in' event: ${JSON.stringify(data)}`)
+		// })
 
 		// Start HTTP server
 		const server = httpServer.listen(config.port, () => {

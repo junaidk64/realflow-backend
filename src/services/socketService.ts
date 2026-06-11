@@ -14,6 +14,7 @@ export const initSocket = (httpServer: HttpServer): IOServer => {
 				config.frontendUrl,
 				'http://localhost:3000',
 				'http://localhost:3001',
+				'http://localhost:5173',
 				'https://realflow-frontend-zeta.vercel.app',
 			],
 			credentials: true,
@@ -26,16 +27,32 @@ export const initSocket = (httpServer: HttpServer): IOServer => {
 
 		// Client must join their own room immediately after connecting:
 		// socket.emit('join', { userId, organizationId })
-		socket.on('join', ({ userId, organizationId }: { userId?: string; organizationId?: string }) => {
-			if (userId) {
-				socket.join(`user:${userId}`)
-				logger.debug(`Socket ${socket.id} joined user:${userId}`)
-			}
-			if (organizationId) {
-				socket.join(`org:${organizationId}`)
-				logger.debug(`Socket ${socket.id} joined org:${organizationId}`)
-			}
+		socket.on('user-in', (data) => {
+			console.log(data)
+			logger.info(`Received 'user-in' event with data: ${JSON.stringify(data)}`)
 		})
+		socket.on(
+			'join',
+
+			({
+				userId,
+				organizationId,
+			}: {
+				userId?: string
+				organizationId?: string
+			}) => {
+				// console.log(userId, organizationId)
+
+				if (userId) {
+					socket.join(`user:${userId}`)
+					logger.debug(`Socket ${socket.id} joined user:${userId}`)
+				}
+				if (organizationId) {
+					socket.join(`org:${organizationId}`)
+					logger.debug(`Socket ${socket.id} joined org:${organizationId}`)
+				}
+			},
+		)
 
 		socket.on('disconnect', () => {
 			logger.debug(`Socket disconnected: ${socket.id}`)
@@ -53,7 +70,11 @@ export const getIO = (): IOServer => {
 
 // ─── Emit helpers ─────────────────────────────────────────────────────────────
 
-export const emitToUser = (userId: string, event: string, data: unknown): void => {
+export const emitToUser = (
+	userId: string,
+	event: string,
+	data: unknown,
+): void => {
 	try {
 		getIO().to(`user:${userId}`).emit(event, data)
 	} catch {
@@ -61,12 +82,27 @@ export const emitToUser = (userId: string, event: string, data: unknown): void =
 	}
 }
 
-export const emitToOrg = (orgId: string, event: string, data: unknown): void => {
+export const emitToOrg = (
+	orgId: string,
+	event: string,
+	data: unknown,
+): void => {
 	try {
 		getIO().to(`org:${orgId}`).emit(event, data)
 	} catch {
 		// Socket.IO not yet initialised — silently skip
 	}
 }
+//listen a event from client "user-in"
+// export const listenUserIn = (callback: (data: any) => void): void => {
+// 	if (!io) return
+// 	io.on('connection', (socket: Socket) => {
+// 		socket.on('user-in', (data) => {
+// 			console.log(data)
+// 			logger.info(`Received 'user-in' event with data: ${JSON.stringify(data)}`)
+// 			callback(data)
+// 		})
+// 	})
+// }
 
 export default { initSocket, getIO, emitToUser, emitToOrg }
