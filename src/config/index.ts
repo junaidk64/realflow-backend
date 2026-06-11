@@ -46,6 +46,12 @@ export const config = {
     user: process.env.SMTP_USER || '',
     pass: process.env.SMTP_PASS || '',
   },
+  // WhatsApp — per-connection secrets are stored encrypted in WhatsAppConnection.
+  // WHATSAPP_APP_SECRET is the fallback used when the webhook arrives before the
+  // connection record can be loaded (e.g. the very first verification request).
+  whatsapp: {
+    graphApiVersion: process.env.WHATSAPP_GRAPH_API_VERSION || 'v21.0',
+  },
 };
 
 export default config;

@@ -4,10 +4,12 @@ dotenv.config()
 import cors from 'cors'
 import express from 'express'
 import helmet from 'helmet'
+import { createServer } from 'http'
 import { config } from './config'
 import { connectDatabase } from './config/database'
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler'
 import { globalLimiter } from './middlewares/rateLimiter'
+import { initSocket } from './services/socketService'
 import logger from './utils/logger'
 
 // Routes
@@ -25,6 +27,7 @@ import smtpRoutes from './routes/smtp'
 import templateRoutes from './routes/templates'
 import userRoutes from './routes/users'
 import webhookRoutes from './routes/webhooks'
+import whatsappRoutes from './routes/whatsapp'
 import workflowRoutes from './routes/workflows'
 
 // Jobs
@@ -33,6 +36,7 @@ import { startGmailSyncJob } from './jobs/gmailSyncJob'
 import { startGmailWatchRenewalJob } from './jobs/gmailWatchRenewalJob'
 
 const app = express()
+const httpServer = createServer(app)
 
 // Security middleware
 app.use(
@@ -65,8 +69,15 @@ app.use(
 	}),
 )
 
-// Body parsing
-app.use(express.json({ limit: '10mb' }))
+// Body parsing — also capture rawBody Buffer for WhatsApp HMAC signature validation
+app.use(
+	express.json({
+		limit: '10mb',
+		verify: (req: express.Request & { rawBody?: Buffer }, _res, buf) => {
+			req.rawBody = buf
+		},
+	}),
+)
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // Global rate limiter
@@ -119,6 +130,7 @@ app.use('/api/admin/templates', adminTemplateRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/workflows', workflowRoutes)
 app.use('/api/webhooks', webhookRoutes)
+app.use('/api/whatsapp', whatsappRoutes)
 app.use('/api/notifications', notificationRoutes)
 app.use('/api/users', userRoutes)
 app.post('/api/recieved', (req, res) => {
@@ -138,8 +150,16 @@ const startServer = async (): Promise<void> => {
 		// Connect to database
 		await connectDatabase()
 
+		// Initialise Socket.IO before starting the server
+		initSocket(httpServer)
+
+		// Listen for client 'user-in' events and log them (useful for debugging)
+		// listenUserIn((data) => {
+		// 	logger.info(`Received 'user-in' event: ${JSON.stringify(data)}`)
+		// })
+
 		// Start HTTP server
-		const server = app.listen(config.port, () => {
+		const server = httpServer.listen(config.port, () => {
 			logger.info(
 				`Server running on port ${config.port} in ${config.nodeEnv} mode`,
 			)
@@ -154,7 +174,7 @@ const startServer = async (): Promise<void> => {
 		// Graceful shutdown
 		const shutdown = async (signal: string) => {
 			logger.info(`Received ${signal}, shutting down gracefully...`)
-			server.close(async () => {
+			httpServer.close(async () => {
 				const { disconnectDatabase } = await import('./config/database')
 				await disconnectDatabase()
 				logger.info('Server closed')

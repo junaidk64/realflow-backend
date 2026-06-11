@@ -2,8 +2,12 @@ import { NextFunction, Request, Response } from 'express'
 import { GmailConnection } from '../models/GmailConnection'
 import { Lead } from '../models/Lead'
 import { WebhookLog } from '../models/WebhookLog'
+import { WhatsAppConnection } from '../models/WhatsAppConnection'
 import { Workflow } from '../models/Workflow'
 import { addEmailProcessingJob } from '../services/queueService'
+import { addWhatsAppMessageJob, addWhatsAppStatusJob } from '../services/whatsappQueueService'
+import { parseWebhookPayload, verifyWebhookSignature } from '../services/whatsappService'
+import { decrypt } from '../utils/encryption'
 import logger from '../utils/logger'
 
 export const handleGmailWebhook = async (
@@ -189,9 +193,137 @@ export const handleN8nCallback = async (
 	}
 }
 
+// ─── WhatsApp Webhook Verification (GET) ─────────────────────────────────────
+// Meta calls GET /api/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=X&hub.challenge=Y
+// We find the connection by verifyToken and respond with the challenge.
+
+export const verifyWhatsAppWebhook = async (
+	req: Request,
+	res: Response,
+): Promise<void> => {
+	const mode = req.query['hub.mode'] as string
+	const token = req.query['hub.verify_token'] as string
+	const challenge = req.query['hub.challenge'] as string
+
+	if (mode !== 'subscribe' || !token) {
+		res.sendStatus(403)
+		return
+	}
+
+	// Find any connection whose decrypted verifyToken matches
+	const connections = await WhatsAppConnection.find({ isActive: true })
+	let matched = false
+	for (const conn of connections) {
+		try {
+			if (decrypt(conn.verifyToken) === token) {
+				matched = true
+				break
+			}
+		} catch {
+			// corrupted token — skip
+		}
+	}
+
+	if (!matched) {
+		logger.warn(`WhatsApp webhook verification failed — unknown verifyToken`)
+		res.sendStatus(403)
+		return
+	}
+
+	logger.info('WhatsApp webhook verified successfully')
+	res.status(200).send(challenge)
+}
+
+// ─── WhatsApp Webhook (POST) ──────────────────────────────────────────────────
+
+export const handleWhatsAppWebhook = async (
+	req: Request,
+	res: Response,
+): Promise<void> => {
+	// Always ack immediately — Meta retries on non-200
+	res.sendStatus(200)
+
+	const rawBody: Buffer = (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body))
+	const signature = (req.headers['x-hub-signature-256'] as string) ?? ''
+
+	try {
+		const payloads = parseWebhookPayload(req.body as Record<string, unknown>)
+
+		for (const payload of payloads) {
+			// Find the connection for this phoneNumberId to validate signature and get user
+			const connection = await WhatsAppConnection.findOne({
+				phoneNumberId: payload.phoneNumberId,
+				isActive: true,
+			})
+
+			if (!connection) {
+				logger.warn(`WhatsApp webhook for unknown phoneNumberId: ${payload.phoneNumberId}`)
+				continue
+			}
+
+			// Validate HMAC signature
+			if (signature) {
+				const appSecret = decrypt(connection.appSecret)
+				const valid = verifyWebhookSignature(rawBody, signature, appSecret)
+				if (!valid) {
+					logger.error(`WhatsApp signature validation failed for ${payload.phoneNumberId}`)
+					await WebhookLog.create({
+						type: 'whatsapp_webhook',
+						payload: req.body,
+						status: 'failed',
+						error: 'Signature validation failed',
+						userId: connection.userId,
+					})
+					continue
+				}
+			}
+
+			const userId = connection.userId.toString()
+			const organizationId = connection.organizationId?.toString() ?? null
+
+			// Log receipt
+			const webhookLog = await WebhookLog.create({
+				type: 'whatsapp_webhook',
+				payload: req.body,
+				status: 'processing',
+				userId: connection.userId,
+				processedAt: new Date(),
+			})
+
+			// Queue each message
+			for (const message of payload.messages) {
+				await addWhatsAppMessageJob({
+					phoneNumberId: payload.phoneNumberId,
+					wabaId: payload.wabaId,
+					message,
+					userId,
+					organizationId,
+				})
+			}
+
+			// Queue each status update
+			for (const status of payload.statuses) {
+				await addWhatsAppStatusJob({ status, userId, organizationId })
+			}
+
+			await WebhookLog.findByIdAndUpdate(webhookLog._id, { status: 'processed' })
+		}
+	} catch (error) {
+		logger.error('WhatsApp webhook handler error:', error)
+		await WebhookLog.create({
+			type: 'whatsapp_webhook',
+			payload: req.body,
+			status: 'failed',
+			error: (error as Error).message,
+		}).catch(() => {})
+	}
+}
+
 export default {
 	handleGmailWebhook,
 	handleN8nWebhook,
 	handleN8nCallback,
 	getWebhookLogs,
+	verifyWhatsAppWebhook,
+	handleWhatsAppWebhook,
 }

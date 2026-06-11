@@ -1,7 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose'
 
 export interface IWebhookLog extends Document {
-	type: 'gmail_push' | 'n8n_callback' | 'outgoing_n8n'
+	type: 'gmail_push' | 'n8n_callback' | 'outgoing_n8n' | 'whatsapp_webhook'
 	payload: Record<string, unknown>
 	status: 'received' | 'processing' | 'processed' | 'failed'
 	error: string | null
@@ -15,7 +15,7 @@ const WebhookLogSchema = new Schema<IWebhookLog>(
 	{
 		type: {
 			type: String,
-			enum: ['gmail_push', 'n8n_callback', 'outgoing_n8n'],
+			enum: ['gmail_push', 'n8n_callback', 'outgoing_n8n', 'whatsapp_webhook'],
 			required: true,
 		},
 		payload: {

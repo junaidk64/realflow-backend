@@ -22,6 +22,8 @@ export type WorkflowType =
 	| 'google_sheets'
 	| 'follow_up'
 	| 'custom'
+	| 'whatsapp_auto_reply'
+	| 'whatsapp_lead_trigger'
 
 export interface IWorkflow extends Document {
 	userId: mongoose.Types.ObjectId
@@ -92,6 +94,8 @@ const WorkflowSchema = new Schema<IWorkflow>(
 				'google_sheets',
 				'follow_up',
 				'custom',
+				'whatsapp_auto_reply',
+				'whatsapp_lead_trigger',
 			],
 			default: 'custom',
 		},
