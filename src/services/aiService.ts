@@ -51,7 +51,7 @@ export async function extractLeadFromEmail(
 
 	let complexity = isKnownAggregator
 		? ('complex' as const)
-		: await classifyEmail(emailSubject, emailBody)
+		: await classifyEmail(emailSubject, emailBody, userId)
 
 	if (complexity === 'spam') {
 		logger.debug(
@@ -65,7 +65,7 @@ export async function extractLeadFromEmail(
 	// Step 2: Long/complex emails → Gemini summarizes to ~200 words before Claude sees them
 	const processedBody =
 		complexity === 'complex' || emailBody.length > 800
-			? await summarizeEmailThread(emailBody)
+			? await summarizeEmailThread(emailBody, userId)
 			: emailBody.slice(0, 1200)
 	logger.debug(
 		`Email from ${emailFrom} classified as ${complexity}, ${emailBody.length} chars original, ${processedBody.length} chars sent to Claude`,
