@@ -292,46 +292,7 @@ export const getDefaultWorkflowTemplates = () => {
 				},
 			},
 		},
-		{
-			id: 'crm-sync',
-			name: 'CRM Sync',
-			description:
-				'Pushes every new lead to your external CRM via HTTP POST. Replace the placeholder CRM URL in the n8n workflow before activating.',
-			type: 'crm_sync',
-			json: {
-				name: 'CRM Sync Workflow',
-				nodes: [
-					{
-						parameters: { httpMethod: 'POST', path: 'crm-sync' },
-						id: 'webhook-node',
-						name: 'Webhook',
-						type: 'n8n-nodes-base.webhook',
-						typeVersion: 1,
-						position: [250, 300],
-					},
-					{
-						parameters: {
-							method: 'POST',
-							url: 'https://your-crm.com/api/leads',
-							sendBody: true,
-							bodyParameters: {
-								parameters: [{ name: 'lead', value: '={{$json}}' }],
-							},
-						},
-						id: 'crm-http-node',
-						name: 'Push to CRM',
-						type: 'n8n-nodes-base.httpRequest',
-						typeVersion: 3,
-						position: [450, 300],
-					},
-				],
-				connections: {
-					Webhook: {
-						main: [[{ node: 'Push to CRM', type: 'main', index: 0 }]],
-					},
-				},
-			},
-		},
+		// crm_sync is now backend-managed — no n8n template needed
 		{
 			id: 'slack-notification',
 			name: 'Slack Lead Alert',

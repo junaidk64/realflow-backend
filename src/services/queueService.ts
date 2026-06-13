@@ -66,6 +66,14 @@ export const n8nTriggerQueue = new Queue('n8n-trigger', {
 	},
 })
 
+export const crmSyncQueue = new Queue('crm-sync', {
+	connection: redisConnection,
+	defaultJobOptions: {
+		attempts: 3,
+		backoff: { type: 'exponential', delay: 5000 },
+	},
+})
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function leadFingerprint(
@@ -420,6 +428,16 @@ const leadExtractionWorker = new Worker(
 			)
 		}
 
+		// ── Gate: crm_sync workflow ──────────────────────────────────────────────
+		const crmSyncWorkflow = activeWorkflows.find((w) => w.type === 'crm_sync')
+		if (crmSyncWorkflow && crmSyncWorkflow.config?.crmUrl) {
+			await crmSyncQueue.add('crm-sync-lead', {
+				leadId: lead._id,
+				userId,
+				workflowId: crmSyncWorkflow._id,
+			})
+		}
+
 		// Custom/n8n workflows — skip all backend-managed types to prevent double execution
 		for (const workflow of activeWorkflows) {
 			if (workflow.webhookUrl && !BACKEND_MANAGED_TYPES.has(workflow.type)) {
@@ -582,6 +600,70 @@ const n8nTriggerWorker = new Worker(
 	{ connection: redisConnection, concurrency: 5 },
 )
 
+// ─── CRM Sync Worker ─────────────────────────────────────────────────────────
+
+const crmSyncWorker = new Worker(
+	'crm-sync',
+	async (job: Job) => {
+		const { leadId, userId, workflowId } = job.data
+
+		const [lead, workflow] = await Promise.all([
+			Lead.findById(leadId).lean(),
+			Workflow.findById(workflowId),
+		])
+
+		if (!lead || !workflow) throw new Error('Lead or workflow not found')
+
+		const crmUrl = workflow.config?.crmUrl as string | undefined
+		if (!crmUrl) throw new Error('CRM URL not configured')
+
+		const crmApiKey = workflow.config?.crmApiKey as string | undefined
+
+		const payload = {
+			leadId: String(lead._id),
+			customerName: lead.customerName,
+			customerEmail: lead.customerEmail,
+			customerPhone: lead.customerPhone,
+			status: lead.status,
+			aiScore: (lead as unknown as { aiScore?: number }).aiScore,
+			confidence: lead.confidence,
+			sentiment: (lead as unknown as { sentiment?: string }).sentiment,
+			businessType: (lead as unknown as { businessType?: string }).businessType,
+			createdAt: lead.createdAt,
+		}
+
+		const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+		if (crmApiKey) headers['Authorization'] = `Bearer ${crmApiKey}`
+
+		const response = await fetch(crmUrl, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify(payload),
+		})
+
+		if (!response.ok) {
+			const body = await response.text().catch(() => '')
+			throw new Error(`CRM responded ${response.status}: ${body.slice(0, 200)}`)
+		}
+
+		await Workflow.findByIdAndUpdate(workflowId, {
+			$inc: { triggerCount: 1 },
+			lastTriggered: new Date(),
+		})
+
+		await createNotification(
+			userId,
+			'workflow_triggered',
+			'CRM Sync',
+			`Lead ${lead.customerName} pushed to CRM`,
+			String(lead._id),
+		)
+
+		return { success: true }
+	},
+	{ connection: redisConnection, concurrency: 5 },
+)
+
 // ─── Error handlers ───────────────────────────────────────────────────────────
 
 ;[
@@ -589,6 +671,7 @@ const n8nTriggerWorker = new Worker(
 	leadExtractionWorker,
 	autoReplyWorker,
 	n8nTriggerWorker,
+	crmSyncWorker,
 ].forEach((worker) => {
 	worker.on('failed', (job, err) =>
 		logger.error(`Job ${job?.id} in ${worker.name} failed:`, err),

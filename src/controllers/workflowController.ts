@@ -228,6 +228,16 @@ export const updateWorkflow = async (
 			return
 		}
 
+		// Block enabling crm_sync without a CRM URL
+		const incomingCrmUrl = wfConfig?.crmUrl ?? workflow.config?.crmUrl
+		if (isActive === true && workflow.type === 'crm_sync' && !incomingCrmUrl) {
+			res.status(400).json({
+				success: false,
+				message: 'Please set your CRM endpoint URL before activating CRM Sync.',
+			})
+			return
+		}
+
 		if (name !== undefined) workflow.name = name
 		if (description !== undefined) workflow.description = description
 		if (webhookUrl !== undefined) workflow.webhookUrl = webhookUrl
@@ -313,6 +323,15 @@ export const toggleWorkflow = async (
 				success: false,
 				message:
 					'Please select an email template or enable AI Reply before activating this workflow.',
+			})
+			return
+		}
+
+		// Block enabling crm_sync without a CRM URL
+		if (newState && workflow.type === 'crm_sync' && !workflow.config?.crmUrl) {
+			res.status(400).json({
+				success: false,
+				message: 'Please set your CRM endpoint URL before activating CRM Sync.',
 			})
 			return
 		}
